@@ -14,6 +14,12 @@
 | --- | --- | --- | --- |
 | DOAI 全球创客大会官网 | 大会信息展示、参会导航与账号接入 | 登录与消息界面接入、大会介绍页重构、场地导览与合作页面拆分、赛事导航修复 | [阅读案例](projects/doai/README.md) |
 
+## 页面预览
+
+[![DOAI 大会介绍页桌面端实拍](projects/doai/images/conference-desktop.png)](projects/doai/README.md#页面截图)
+
+大会介绍页重构与多入口导航。更多场地导览、合作页面、登录和手机端截图见 [DOAI 项目案例](projects/doai/README.md#页面截图)。
+
 ## 从项目中可以了解什么
 
 - **业务理解：** 把大会资料整理成参会者、创客和合作方能使用的页面与入口。
