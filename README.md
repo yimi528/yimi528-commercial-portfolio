@@ -20,7 +20,7 @@
 - **业务与数据**：票务、战队、社区、消息、审核、权限和数据库持久化。
 - **工程与交付**：并发与异常处理、自动化回归、部署适配和发布工具。
 
-**[查看项目案例](projects/doai/README.md)** &nbsp;&nbsp; [完整开发详解](projects/doai/IMPLEMENTATION.md)
+**[查看项目案例](projects/doai/README.md)** &nbsp;&nbsp; [完整开发详解](projects/doai/IMPLEMENTATION.md) &nbsp;&nbsp; [查看网站源码](projects/doai/source/)
 
 <br>
 
@@ -40,4 +40,4 @@
 
 ---
 
-<sub>案例源码为私有。文档采用 <a href="LICENSE">Apache-2.0</a>；原项目私有源码、品牌及第三方素材的权利不在本仓库许可范围内。</sub>
+<sub>DOAI 网站源码已在本仓库公开。作品集文档采用 <a href="LICENSE">Apache-2.0</a> 许可。项目源码、品牌及第三方素材的权利归各自权利人所有。</sub>

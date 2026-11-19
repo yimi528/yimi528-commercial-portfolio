@@ -20,7 +20,7 @@ One platform for attendees, makers, and operators, connecting conference informa
 - **Workflows and data**: Tickets, teams, community, messages, reviews, permissions, and persistence.
 - **Engineering and delivery**: Concurrency and failure handling, automated regression coverage, deployment support, and release tools.
 
-**[View Case Study](projects/doai/README.en.md)** &nbsp;&nbsp; [Implementation Details](projects/doai/IMPLEMENTATION.en.md)
+**[View Case Study](projects/doai/README.en.md)** &nbsp;&nbsp; [Implementation Details](projects/doai/IMPLEMENTATION.en.md) &nbsp;&nbsp; [Browse Website Source](projects/doai/source/)
 
 <br>
 
@@ -40,4 +40,4 @@ This portfolio includes real interface screenshots, the full scope of my work, a
 
 ---
 
-<sub>Original source code is private. Documentation uses <a href="LICENSE">Apache-2.0</a>; the license does not extend to the original project's private source code, brands, or third-party materials.</sub>
+<sub>The DOAI website source code is available in this repository. Portfolio documentation is licensed under <a href="LICENSE">Apache-2.0</a>. Rights to the project source code, branding, and third-party materials remain with their respective owners.</sub>
