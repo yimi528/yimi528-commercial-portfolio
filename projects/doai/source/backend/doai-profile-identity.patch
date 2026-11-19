@@ -1,0 +1,137 @@
+--- a/src/modules/user.module.ts
++++ b/src/modules/user.module.ts
+@@ -64,11 +64,12 @@
+ 
+   /** 读取用户资料：hub 业务字段 + atom_users 资料字段 合并（资料字段以 atom_users 为准） */
+   async readMergedProfile(id: string) {
+-    const [u, profile] = await Promise.all([
+-      this.prisma.user.findUnique({ where: { id } }),
+-      // hub users.id 已统一为 32 位 uuid，与 atom_users.user_id 同值，直接用 id 查
+-      this.authProfile.readProfile(id).catch(() => null), // mock 用户等无 atom_users 行 → 兜底
+-    ])
++    const u = await this.prisma.user.findUnique({ where: { id } })
++    // 历史业务主键仍可能为 u+时间戳；统一账号资料必须按映射 UUID 读取。
++    // 未回填映射的 UUID 账号兼容直接用 id；不存在的业务用户不能读取账号资料。
++    const profile = u
++      ? await this.authProfile.readProfile(u.userIdUuid ?? u.id).catch(() => null)
++      : null
+     return { u, profile }
+   }
+ 
+@@ -450,6 +451,12 @@
+       }
+       hubData.org = org || null
+     }
++    // CurrentUser.id 是业务主键，不能直接用它更新统一账号库。
++    // 先确认业务用户存在；只使用服务端保存的映射，不接受请求体指定账号。
++    const hubUser = await this.prisma.user.findUnique({ where: { id: uid } })
++    if (!hubUser) throw new HttpException({ error: { code: 'NOT_FOUND', message: '用户不存在' } }, HttpStatus.NOT_FOUND)
++    const atomUserId = hubUser.userIdUuid ?? hubUser.id
++
+     // 内容安全：资料文本字段（昵称/头衔/个性标签/签名/省市/院校）写库前送微信 msg_sec_check（scene=资料）
+     await this.sec.assertTextSafe(uid, {
+       昵称: typeof profileData.name === 'string' ? profileData.name : undefined,
+@@ -461,7 +468,7 @@
+     }, 1)
+     // atom_users 先写（权威），hub 同步在后——中间失败允许最终不一致（老接口短暂读旧值）
+     if (Object.keys(profileData).length > 0) {
+-      await this.authProfile.updateProfile(uid, profileData as AuthProfileUpdate)
++      await this.authProfile.updateProfile(atomUserId, profileData as AuthProfileUpdate)
+     }
+ 
+     // ── 业务字段（写 hub users）+ 资料字段同步 ──
+@@ -482,7 +489,7 @@
+     }
+ 
+     // 返回：合并资料（atom_users 新值）+ 业务（hub 新值）
+-    const profile = await this.authProfile.readProfile(uid).catch(() => null)
++    const profile = await this.authProfile.readProfile(atomUserId).catch(() => null)
+     const merged = this.mergedProfile(u, profile)
+ 
+     // 任务进度：完善侠客名片 → t4（按资料完整度重算覆盖，异步非阻塞）
+--- a/src/modules/user.module.spec.ts
++++ b/src/modules/user.module.spec.ts
+@@ -186,9 +186,83 @@
+     });
+   });
+ 
++  describe('统一账号资料 ID 映射', () => {
++    const LEGACY_ID = 'u1786462305565';
++    const UUID = '0123456789abcdef0123456789abcdef';
++    const OTHER_UUID = 'fedcba9876543210fedcba9876543210';
++    const hubRow = {
++      id: LEGACY_ID, userIdUuid: UUID, name: '业务库旧姓名', avatarUrl: null,
++      skills: [], joinedSectIds: [], hostedEventIds: [],
++    };
++
++    it('旧格式用户登录资料与公开主页均按 UUID 读取，返回 ID 保持业务主键', async () => {
++      prisma.user.findUnique.mockResolvedValue(hubRow);
++      authProfile.readProfile.mockResolvedValue({ name: '统一账号姓名', skills: ['AI'] });
++      const me = await svc.me(LEGACY_ID);
++      const publicProfile = await svc.getUser(LEGACY_ID);
++      expect(me).toMatchObject({ id: LEGACY_ID, name: '统一账号姓名', skills: ['AI'] });
++      expect(publicProfile).toMatchObject({ id: LEGACY_ID, name: '统一账号姓名' });
++      expect(authProfile.readProfile.mock.calls).toEqual([[UUID], [UUID]]);
++    });
++
++    it.each([
++      ['旧格式主键', LEGACY_ID, UUID],
++      ['UUID 主键', UUID, UUID],
++      ['未回填映射的 UUID 主键', UUID, null],
++    ])('%s 保存和回读使用统一账号 ID，业务更新保留原主键', async (_, id, mapping) => {
++      const row = { ...hubRow, id, userIdUuid: mapping };
++      const payload = { name: '新姓名', avatarUrl: 'https://example.com/avatar.png', city: '上海', skills: ['AI'] };
++      prisma.user.findUnique.mockResolvedValue(row);
++      prisma.user.update.mockResolvedValue({ ...row, ...payload });
++      authProfile.readProfile.mockResolvedValue(payload);
++      const result = await svc.updateProfile(id, payload);
++      expect(authProfile.updateProfile).toHaveBeenCalledWith(UUID, payload);
++      expect(authProfile.readProfile).toHaveBeenCalledWith(UUID);
++      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id }, data: payload });
++      expect(result).toMatchObject({ id, ...payload });
++    });
++
++    it('请求体不能覆盖服务端 UUID 映射，映射优先于 UUID 形状的业务主键', async () => {
++      prisma.user.findUnique.mockResolvedValue({ ...hubRow, id: OTHER_UUID });
++      prisma.user.update.mockResolvedValue({ ...hubRow, id: OTHER_UUID, name: '新姓名' });
++      await svc.updateProfile(OTHER_UUID, { name: '新姓名', userIdUuid: OTHER_UUID, atomUserId: OTHER_UUID } as any);
++      expect(authProfile.updateProfile).toHaveBeenCalledWith(UUID, { name: '新姓名' });
++      expect(authProfile.readProfile).toHaveBeenCalledWith(UUID);
++      expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: OTHER_UUID }, data: { name: '新姓名' } });
++    });
++
++    it('业务用户不存在时，读取返回空且保存拒绝，不触碰统一账号库', async () => {
++      prisma.user.findUnique.mockResolvedValue(null);
++      expect(await svc.getUser(LEGACY_ID)).toBeNull();
++      await expectReject(() => svc.updateProfile(LEGACY_ID, { name: '新姓名' }), 404, 'NOT_FOUND');
++      expect(authProfile.readProfile).not.toHaveBeenCalled();
++      expect(authProfile.updateProfile).not.toHaveBeenCalled();
++      expect(prisma.user.update).not.toHaveBeenCalled();
++    });
++
++    it('统一账号写入失败时保留失败，不继续写业务资料或创建账号', async () => {
++      prisma.user.findUnique.mockResolvedValue(hubRow);
++      const error = new HttpException('统一账号不存在', 404);
++      authProfile.updateProfile.mockRejectedValue(error);
++      await expect(svc.updateProfile(LEGACY_ID, { name: '新姓名' })).rejects.toBe(error);
++      expect(authProfile.updateProfile).toHaveBeenCalledWith(UUID, { name: '新姓名' });
++      expect(prisma.user.update).not.toHaveBeenCalled();
++    });
++
++    it('统一账号资料读取失败仍按原规则回退业务资料', async () => {
++      prisma.user.findUnique.mockResolvedValue(hubRow);
++      authProfile.readProfile.mockRejectedValue(new Error('temporary unavailable'));
++      expect(await svc.me(LEGACY_ID)).toMatchObject({ id: LEGACY_ID, name: hubRow.name });
++      expect(authProfile.readProfile).toHaveBeenCalledWith(UUID);
++    });
++  });
++
+   // ─── updateProfile ───
+ 
+   describe('updateProfile', () => {
++    beforeEach(() => {
++      prisma.user.findUnique.mockResolvedValue({ id: UID, userIdUuid: UID });
++    });
+     it('name 超过 64 字符 → 400 VALIDATION_ERROR', async () => {
+       const longName = 'a'.repeat(65);
+       await expectReject(

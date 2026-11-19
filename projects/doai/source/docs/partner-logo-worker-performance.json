@@ -1,0 +1,51 @@
+{
+  "measuredAt": "2026-11-12T10:19:21.814Z",
+  "environment": "local production /doai/ build; isolated API fixtures; Chrome headless; desktop 1440x1000 @2x",
+  "scope": "Long Tasks on the renderer main thread while scrolling all logos. 4x is CDP main-thread CPU throttling, not worker CPU or whole-device throttling. Wall time includes asynchronous work and test polling. These are fresh measurements, not previous review figures.",
+  "results": [
+    {
+      "mode": "normal",
+      "total": 65,
+      "pixelCalls": 0,
+      "wallMs": 2045.8999999761581,
+      "longTasks": 0,
+      "maxLongTaskMs": 0,
+      "totalLongTaskMs": 0,
+      "adapted": 49,
+      "vectors": 16
+    },
+    {
+      "mode": "throttled",
+      "total": 65,
+      "pixelCalls": 0,
+      "wallMs": 1487,
+      "longTasks": 0,
+      "maxLongTaskMs": 0,
+      "totalLongTaskMs": 0,
+      "adapted": 49,
+      "vectors": 16
+    },
+    {
+      "mode": "unsupported",
+      "total": 65,
+      "pixelCalls": 0,
+      "wallMs": 220.29999995231628,
+      "longTasks": 0,
+      "maxLongTaskMs": 0,
+      "totalLongTaskMs": 0,
+      "adapted": 0,
+      "vectors": 16
+    },
+    {
+      "mode": "worker-failure",
+      "total": 65,
+      "pixelCalls": 0,
+      "wallMs": 172.19999998807907,
+      "longTasks": 0,
+      "maxLongTaskMs": 0,
+      "totalLongTaskMs": 0,
+      "adapted": 0,
+      "vectors": 16
+    }
+  ]
+}

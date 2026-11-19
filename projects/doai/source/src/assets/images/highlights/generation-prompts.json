@@ -1,0 +1,56 @@
+{
+  "tool": "Built-in image_gen",
+  "styleReference": "User-provided DOAI poster (visual reference; prompts describe its blue-and-white 3D diorama style).",
+  "assets": [
+    {
+      "file": "compete.jpg",
+      "prompt": "Use case: stylized-concept. Asset type: website event highlight illustration, one square image. Create ONE standalone illustration of a young AI maker presenting on a small white competition stage, a tiny friendly round white-and-blue robot mascot with a black beret, winner trophy and blue computer display. Consistent polished soft 3D clay rendering, isometric miniature diorama, frosted glass blue accents, white, sky blue and royal blue palette, subtle pale blue ground shadow. All objects comfortably centered on an almost white #F5FAFF background, generous whitespace, no cropped objects, clearly readable at small card size. Playful youthful AI makers conference art direction. No text, no lettering, no numerals, no watermark.",
+      "webExport": {
+        "width": 640,
+        "height": 640,
+        "format": "JPEG",
+        "quality": 82
+      }
+    },
+    {
+      "file": "explore.jpg",
+      "prompt": "Use case: stylized-concept. Asset type: website event highlight illustration, one square image. Create ONE standalone illustration of a miniature maker marketplace with two white and blue exhibition booths, innovative AI devices and a tiny friendly round white-and-blue robot mascot wearing a black beret. Consistent polished soft 3D clay rendering, isometric miniature diorama, frosted glass blue accents, white, sky blue and royal blue palette, subtle pale blue ground shadow. All objects comfortably centered on an almost white #F5FAFF background, generous whitespace, no cropped objects, clearly readable at small card size. Playful youthful AI makers conference art direction. No text, no lettering, no numerals, no watermark.",
+      "webExport": {
+        "width": 640,
+        "height": 640,
+        "format": "JPEG",
+        "quality": 82
+      }
+    },
+    {
+      "file": "learn.jpg",
+      "prompt": "Use case: stylized-concept. Asset type: website event highlight illustration, one square image. Create ONE standalone illustration of two young professionals learning from a presenter by a translucent blue data visualization screen, little white lecture podiums and a friendly round white-and-blue robot mascot wearing a black beret. Consistent polished soft 3D clay rendering, isometric miniature diorama, frosted glass blue accents, white, sky blue and royal blue palette, subtle pale blue ground shadow. All objects comfortably centered on an almost white #F5FAFF background, generous whitespace, no cropped objects, clearly readable at small card size. Playful youthful AI makers conference art direction. No text, no lettering, no numerals, no watermark.",
+      "webExport": {
+        "width": 640,
+        "height": 640,
+        "format": "JPEG",
+        "quality": 82
+      }
+    },
+    {
+      "file": "play.jpg",
+      "prompt": "Use case: stylized-concept. Asset type: website event highlight illustration, one square image. Create ONE standalone illustration of a playful white robotic arm, miniature interactive AI game station, blue holographic toy shapes, a friendly round white-and-blue robot mascot wearing a black beret. Consistent polished soft 3D clay rendering, isometric miniature diorama, frosted glass blue accents, white, sky blue and royal blue palette, subtle pale blue ground shadow. All objects comfortably centered on an almost white #F5FAFF background, generous whitespace, no cropped objects, clearly readable at small card size. Playful youthful AI makers conference art direction. No text, no lettering, no numerals, no watermark.",
+      "webExport": {
+        "width": 640,
+        "height": 640,
+        "format": "JPEG",
+        "quality": 82
+      }
+    },
+    {
+      "file": "collaborate.jpg",
+      "prompt": "Use case: stylized-concept. Asset type: website event highlight illustration, one square image. Create ONE standalone illustration of two young founders seated together collaborating on a laptop over a small white table, floating blue interconnected nodes and a friendly round white-and-blue robot mascot wearing a black beret. Consistent polished soft 3D clay rendering, isometric miniature diorama, frosted glass blue accents, white, sky blue and royal blue palette, subtle pale blue ground shadow. All objects comfortably centered on an almost white #F5FAFF background, generous whitespace, no cropped objects, clearly readable at small card size. Playful youthful AI makers conference art direction. No text, no lettering, no numerals, no watermark.",
+      "webExport": {
+        "width": 640,
+        "height": 640,
+        "format": "JPEG",
+        "quality": 82
+      }
+    }
+  ]
+}

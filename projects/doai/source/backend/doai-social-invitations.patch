@@ -1,0 +1,387 @@
+diff --git a/docs/doai-release.md b/docs/doai-release.md
+index 83d981d..292e270 100644
+--- a/docs/doai-release.md
++++ b/docs/doai-release.md
+@@ -45,7 +45,7 @@ SQL：`prisma/migrations/sql/20261023_add_doai.sql`。目标为 **DATABASE_URL 
+    ```
+ 4. 在后端环境配置 `DOAI_ADMIN_USER_IDS`（逗号分隔的主站 `users.id`，默认空，即无管理员）。通过现有主站发布流程部署并重启 `dist/main`；DOAI 不单独监听端口。
+ 5. 确认 `GET /api/doai/health` 正常；匿名访问个人数据须为 401，普通账号访问审核/核销须为 403。
+-6. 发布 [Karovia/doai-website](https://github.com/Karovia/doai-website) 的配套前端。同域部署时 `/api/*` 交给主站 API；独立域名/Vercel 使用站点同源代理，配置 `ATOMHUB_API_URL` 为主站 origin（不含 `/api`）。站点资源即使在 `/doai/`，API 仍使用根路径。
++6. 发布 [Karovia/doai-website](https://github.com/Karovia/doai-website) 的配套前端。同域部署时 `/api/*` 交给主站 API；独立域名/Vercel 使用站点同源代理，配置 `ATOMHUB_API_URL` 为主站 origin（不含 `/api`）。独立部署的前端请求 `/api/*`，Vercel 多段路径通过 `__p` 还原；`BASE=/doai/` 子路径部署的前端请求 `/doai/api/*`，由 nginx 转回主站 `/api/*`，应一并配置该反代。
+ 
+ 上传分支不会自动执行 SQL 或发布生产服务。回滚应用时保留新增表及数据；数据删除需另行确认。
+ 
+@@ -79,3 +79,29 @@ SQL：`prisma/migrations/sql/20261023_add_doai.sql`。目标为 **DATABASE_URL 
+ `npm test -- --runInBand doai.service.spec.ts` 覆盖匿名/管理员权限、归属隔离、服务端编号、重复核销、队伍满员及资料越权。SQL 由 Prisma 目标模型导出，补充仓库要求的注释、InnoDB 与 updated_at 数据库自动更新；结构与模型逐项比对。
+ 
+ SQL 已在隔离的 MySQL 8.0 Docker 容器执行两次，确认 11 张表、注释、引擎、字符集、预约/凭证/核销/队员/交换/已读唯一约束及默认隐私值；并发两次核销确认只有一次状态变更和一条审计记录。未连接或执行生产数据库；上线前仍须验证真实账号及完整发布环境。
++
++
++## 2026-10-26 战队邀请与名片修复
++
++队长邀请与成员主动申请为两个不同流程。此前前端向自己的战队发送成员申请会被拒绝；本次新增 `doai_team_invitations`，保留现有申请接口。
++
++发布前核对业务库并执行新增迁移：
++
++```sh
++npx prisma db execute --schema prisma/schema.prisma --file prisma/migrations/sql/20261026_add_doai_team_invitations.sql
++npx prisma generate
++npm test -- --runInBand doai.service.spec.ts
++npm run build
++```
++
++完成 SQL 后再发布后端，最后发布配套前端。通知和邀请收件箱会查询新表，不能仅更新服务代码而遗漏迁移。此过程不需要改账号权威库，也不需要清空已有报名、成员或申请。
++
++- `POST /api/doai/team-invitations`：`{teamId,toUserId,message}`；发起人从会话取，只允许本战队队长；要求互关、未满员、目标未加入其他战队。
++- `POST /api/doai/team-invitation-action`：`{id,action:'accept'|'decline'}`；只有被邀请人可以处理。接受时在 Serializable 事务内重新检查人数与成员归属，再加入真实的被邀请人。
++- 原 `POST team-applications` / `team-application-action` 继续服务“成员申请、队长审核”。`GET team-applications` 合并两个收件箱，记录的 `kind` 为 `application` 或 `invitation`。没有战队的受邀人也可读取并接受邀请。
++- 通知返回 `applicationKind` 与持久化 `applicationStatus`，前端据此选择处理接口；接受邀请后同步刷新“我的战队”。
++- 名片交换按现有唯一 `pair_key` 复用快照；重复或反向交换不重复通知，唯一键竞争会重读已经提交的名片对。
++
++验证：29 项 DoaiService 单元测试通过，覆盖邀请身份、互关、人数、已有战队、收件箱、通知类型、解散清理，以及重复／反向／唯一键竞争的名片交换；Prisma Client 生成与后端构建通过。未在生产库执行本迁移。
++
++隔离数据库补充验证：配套前端仓库的 `scripts/verify_social_mysql.mjs` 在新建、无持久卷的 MySQL 8.0 容器中执行基础 DOAI、社区 CMS 与本邀请增量 SQL（邀请 SQL 执行两次）。使用显式本地随机端口连接真实 Prisma／DoaiService，验证邀请、通知持久化、旧申请、三人并发争夺两个剩余席位、正反向并发交换唯一性及解散清理，全部通过；测试容器已删除。没有读取 `.env` 作为测试连接，没有执行生产 SQL。
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 1457923..40ff96b 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -937,6 +937,24 @@ model DoaiTeamApplication {
+   @@map("doai_team_applications")
+ }
+ 
++model DoaiTeamInvitation {
++  id         String    @id @db.VarChar(36)
++  teamId     String    @map("team_id") @db.VarChar(36)
++  fromUserId String    @map("from_user_id") @db.VarChar(36)
++  toUserId   String    @map("to_user_id") @db.VarChar(36)
++  message    String    @default("") @db.VarChar(1000)
++  status     String    @default("pending") @db.VarChar(24)
++  handledBy  String?   @map("handled_by") @db.VarChar(36)
++  handledAt  DateTime? @map("handled_at") @db.DateTime(3)
++  createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(3)
++  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.DateTime(3)
++
++  @@unique([teamId, toUserId])
++  @@index([fromUserId, createdAt])
++  @@index([toUserId, status, createdAt])
++  @@map("doai_team_invitations")
++}
++
+ model DoaiCardExchange {
+   id         String   @id @db.VarChar(36)
+   fromUserId String   @map("from_user_id") @db.VarChar(36)
+diff --git a/src/modules/doai.module.ts b/src/modules/doai.module.ts
+index a08ca02..89a9afb 100644
+--- a/src/modules/doai.module.ts
++++ b/src/modules/doai.module.ts
+@@ -36,6 +36,8 @@ export class DoaiController {
+   @Post('teams/:id/leave') leavePath(@Param('id') id: string, @Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.editTeam(id, 'leave', body, user) }
+   @Get('team-applications') applications(@CurrentUser() user?: RequestUser) { return this.service.applications(user) }
+   @Post('team-applications') apply(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.apply(body, user) }
++  @Post('team-invitations') invite(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.invite(body, user) }
++  @Post('team-invitation-action') handleInvite(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.handleInvitation(body.id, body.action, user) }
+   @Post('team-application-action') handle(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.handleApplication(body.id, body.action, user) }
+   @Post('team-applications/:id/accept') accept(@Param('id') id: string, @CurrentUser() user?: RequestUser) { return this.service.handleApplication(id, 'accept', user) }
+   @Post('team-applications/:id/decline') decline(@Param('id') id: string, @CurrentUser() user?: RequestUser) { return this.service.handleApplication(id, 'decline', user) }
+diff --git a/src/modules/doai.service.spec.ts b/src/modules/doai.service.spec.ts
+index 5792cf7..502eace 100644
+--- a/src/modules/doai.service.spec.ts
++++ b/src/modules/doai.service.spec.ts
+@@ -12,9 +12,13 @@ function setup() {
+     doaiNotification: { create: jest.fn(async ({ data }) => data), findMany: jest.fn(async () => []) },
+     doaiCheckin: { create: jest.fn() },
+     doaiProfile: { upsert: jest.fn(async ({ create }) => create), findMany: jest.fn(async () => []), findUnique: jest.fn(), update: jest.fn() },
+-    doaiTeam: { findUnique: jest.fn() },
+-    doaiTeamMember: { findMany: jest.fn(), create: jest.fn() },
+-    doaiTeamApplication: { findUnique: jest.fn(), update: jest.fn() },
++    doaiTeam: { findUnique: jest.fn(), delete: jest.fn() },
++    doaiTeamMember: { findMany: jest.fn(), create: jest.fn(), findUnique: jest.fn(), deleteMany: jest.fn() },
++    doaiTeamApplication: { findUnique: jest.fn(), update: jest.fn(), deleteMany: jest.fn(), findMany: jest.fn(async () => []) },
++    doaiTeamInvitation: { deleteMany: jest.fn(), findMany: jest.fn(async () => []), findUnique: jest.fn(), upsert: jest.fn(async ({ create, update }) => ({ ...create, ...update, createdAt: new Date() })), update: jest.fn() },
++    doaiNotificationRead: { findMany: jest.fn(async () => []) },
++    doaiFollow: { count: jest.fn(async () => 2) },
++    doaiCardExchange: { upsert: jest.fn(async ({ create }) => ({ ...create, createdAt: new Date() })) },
+     // 组队广场 / 达人名片 / 首页配置（doai-community-cms 新增）
+     doaiRecruitment: { create: jest.fn(async ({ data }) => ({ ...data, likes: 0, applicationsCount: 0, status: 'open', createdAt: new Date() })), findMany: jest.fn(async () => []), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn() },
+     doaiRecruitmentLike: { findMany: jest.fn(async () => []), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn(async () => ({ count: 0 })), count: jest.fn(async () => 0) },
+@@ -220,3 +224,128 @@ describe('DOAI uses main-site identity and persistent business rules', () => {
+     expect(result.recruitments.map(item => item.hasApplied)).toEqual([true, false])
+   })
+ })
++
++describe('DOAI leader invitations and repeatable card exchanges', () => {
++  const team = { id: 'team', eventId: 'doai-2026', leaderId: actor.id, name: '真实战队' }
++  function invitationSetup() {
++    const result = setup()
++    result.db.doaiTeam.findUnique.mockResolvedValue(team)
++    result.db.doaiTeamMember.findMany.mockResolvedValue([{ userId: actor.id, isLeader: true }])
++    result.db.doaiTeamMember.findUnique.mockResolvedValue(null)
++    return result
++  }
++  it('requires authentication, leader ownership and a different recipient', async () => {
++    const { service, db } = invitationSetup()
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }), 401)
++    await status(service.invite({ teamId: 'team', toUserId: actor.id }, actor), 400)
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }, { id: 'non-leader' }), 403)
++    expect(db.doaiTeamInvitation.upsert).not.toHaveBeenCalled()
++  })
++  it('persists the authenticated leader and actual recipient, then notifies the recipient', async () => {
++    const { service, db } = invitationSetup()
++    const result = await service.invite({ teamId: 'team', toUserId: 'peer', fromUserId: 'forged', message: '邀请你加入' }, actor)
++    const created = db.doaiTeamInvitation.upsert.mock.calls[0][0].create
++    expect(created.fromUserId).toBe(actor.id)
++    expect(created.toUserId).toBe('peer')
++    expect(result.application.kind).toBe('invitation')
++    expect(db.doaiNotification.create.mock.calls[0][0].data).toMatchObject({ toUserId: 'peer', applicationId: created.id })
++  })
++  it('rejects non-mutual, full, already-teamed and pending invitees without writing', async () => {
++    const { service, db } = invitationSetup()
++    db.doaiFollow.count.mockResolvedValue(0)
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }, actor), 403)
++    db.doaiFollow.count.mockResolvedValue(2)
++    db.doaiTeamMember.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ userId: `m${i}` })))
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }, actor), 409)
++    db.doaiTeamMember.findMany.mockResolvedValue([{ userId: actor.id }])
++    db.doaiTeamMember.findUnique.mockResolvedValue({ teamId: 'another-team' })
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }, actor), 409)
++    db.doaiTeamMember.findUnique.mockResolvedValue(null)
++    db.doaiTeamInvitation.findUnique.mockResolvedValue({ status: 'pending' })
++    await status(service.invite({ teamId: 'team', toUserId: 'peer' }, actor), 409)
++    expect(db.doaiTeamInvitation.upsert).not.toHaveBeenCalled()
++  })
++  it('only lets the invited account accept and adds that account as a member', async () => {
++    const { service, db } = invitationSetup()
++    db.doaiTeamInvitation.findUnique.mockResolvedValue({ id: 'inv', teamId: 'team', fromUserId: actor.id, toUserId: 'peer', status: 'pending' })
++    await status(service.handleInvitation('inv', 'accept', actor), 403)
++    expect(db.doaiTeamMember.create).not.toHaveBeenCalled()
++    await service.handleInvitation('inv', 'accept', { id: 'peer' })
++    expect(db.doaiTeamMember.create.mock.calls[0][0].data).toMatchObject({ userId: 'peer', teamId: 'team', eventId: 'doai-2026' })
++    expect(db.doaiTeamInvitation.update.mock.calls[0][0].data).toMatchObject({ status: 'accepted', handledBy: 'peer' })
++    expect(db.$transaction.mock.calls.at(-1)[1]).toEqual({ isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
++  })
++  it('rechecks membership and capacity at acceptance; decline does not add a member', async () => {
++    const { service, db } = invitationSetup()
++    db.doaiTeamInvitation.findUnique.mockResolvedValue({ id: 'inv', teamId: 'team', fromUserId: actor.id, toUserId: 'peer', status: 'pending' })
++    db.doaiTeamMember.findUnique.mockResolvedValue({ teamId: 'other' })
++    await status(service.handleInvitation('inv', 'accept', { id: 'peer' }), 409)
++    db.doaiTeamMember.findUnique.mockResolvedValue(null)
++    db.doaiTeamMember.findMany.mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ userId: `m${i}` })))
++    await status(service.handleInvitation('inv', 'accept', { id: 'peer' }), 409)
++    await service.handleInvitation('inv', 'decline', { id: 'peer' })
++    expect(db.doaiTeamMember.create).not.toHaveBeenCalled()
++    expect(db.doaiTeamInvitation.update.mock.calls[0][0].data.status).toBe('declined')
++  })
++  it('rejects already handled invitations and invitations for deleted teams', async () => {
++    const { service, db } = invitationSetup()
++    db.doaiTeamInvitation.findUnique.mockResolvedValue({ id: 'inv', teamId: 'team', fromUserId: actor.id, toUserId: 'peer', status: 'accepted' })
++    await status(service.handleInvitation('inv', 'accept', { id: 'peer' }), 409)
++    db.doaiTeamInvitation.findUnique.mockResolvedValue({ id: 'inv', teamId: 'team', fromUserId: actor.id, toUserId: 'peer', status: 'pending' })
++    db.doaiTeam.findUnique.mockResolvedValue(null)
++    await status(service.handleInvitation('inv', 'accept', { id: 'peer' }), 404)
++    expect(db.doaiTeamMember.create).not.toHaveBeenCalled()
++  })
++  it('returns the existing card pair on repeat exchange without duplicating the notification', async () => {
++    const { service, db } = setup()
++    db.doaiProfile.findUnique.mockResolvedValue({ isPublic: true, allowCardExchange: true })
++    const first = await service.exchange({ toUserId: 'peer' }, actor)
++    const row = { ...db.doaiCardExchange.upsert.mock.calls[0][0].create, createdAt: new Date(first.exchange.at) }
++    db.doaiCardExchange.upsert.mockResolvedValue(row)
++    const repeated = await service.exchange({ toUserId: 'peer' }, actor)
++    expect(repeated.exchange.id).toBe(first.exchange.id)
++    const reverse = await service.exchange({ toUserId: actor.id }, { id: 'peer' })
++    expect(reverse.exchange.id).toBe(first.exchange.id)
++    expect(reverse.exchange.direction).toBe('in')
++    expect(db.doaiNotification.create).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('DOAI social read models and concurrent exchange recovery', () => {
++  it('returns pending invitations to a recipient who has no team', async () => {
++    const { service, db } = setup()
++    db.doaiTeamInvitation.findMany.mockResolvedValue([{ id: 'inv', teamId: 'team', fromUserId: 'leader', toUserId: 'peer', status: 'pending', createdAt: new Date() }])
++    db.doaiTeam.findUnique.mockResolvedValue({ id: 'team', name: 'Team' })
++    const inbox = await service.applications({ id: 'peer' })
++    expect(inbox.received).toHaveLength(1)
++    expect(inbox.received[0]).toMatchObject({ kind: 'invitation', fromUserId: 'leader', toUserId: 'peer' })
++    const sent = await service.applications({ id: 'leader' })
++    expect(sent.sent[0].kind).toBe('invitation')
++  })
++  it('tags invitation notifications with their kind and persisted handling status', async () => {
++    const { service, db } = setup()
++    db.doaiNotification.findMany.mockResolvedValue([{ id: 'notice', type: 'team', toUserId: 'peer', applicationId: 'inv', createdAt: new Date() }])
++    db.doaiTeamInvitation.findMany.mockResolvedValue([{ id: 'inv', status: 'accepted' }])
++    const result = await service.notifications({ id: 'peer' })
++    expect(result.notifications[0]).toMatchObject({ applicationKind: 'invitation', applicationStatus: 'accepted' })
++  })
++  it('removes outstanding invitations when a leader disbands the team', async () => {
++    const { service, db } = setup()
++    db.doaiTeam.findUnique.mockResolvedValue({ id: 'team', leaderId: actor.id })
++    db.doaiTeamMember.findMany.mockResolvedValue([{ userId: actor.id }])
++    await service.editTeam('team', 'leave', {}, actor)
++    expect(db.doaiTeamInvitation.deleteMany).toHaveBeenCalledWith({ where: { teamId: 'team' } })
++    expect(db.doaiTeamApplication.deleteMany).toHaveBeenCalledWith({ where: { teamId: 'team' } })
++    expect(db.doaiTeam.delete).toHaveBeenCalledWith({ where: { id: 'team' } })
++  })
++  it('retries a card-pair uniqueness race and returns the committed pair', async () => {
++    const { service, db } = setup()
++    db.doaiProfile.findUnique.mockResolvedValue({ isPublic: true, allowCardExchange: true })
++    db.doaiCardExchange.upsert.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('pair race', { code: 'P2002', clientVersion: '6' }))
++      .mockResolvedValueOnce({ id: 'existing-pair', fromUserId: actor.id, toUserId: 'peer', fromCard: { name: 'Me' }, toCard: { name: 'Peer' }, createdAt: new Date() })
++    const result = await service.exchange({ toUserId: 'peer' }, actor)
++    expect(result.exchange.id).toBe('existing-pair')
++    expect(db.doaiCardExchange.upsert).toHaveBeenCalledTimes(2)
++    expect(db.doaiNotification.create).not.toHaveBeenCalled()
++  })
++})
+diff --git a/src/modules/doai.service.ts b/src/modules/doai.service.ts
+index 618e1e9..d733770 100644
+--- a/src/modules/doai.service.ts
++++ b/src/modules/doai.service.ts
+@@ -240,6 +240,7 @@ export class DoaiService {
+         if (!team.members.some(m => m.id === target)) fail('成员不存在', 404)
+         if (action === 'remove' && target === team.leaderId) fail('队长请使用解散')
+         if (target === team.leaderId) {
++          await db.doaiTeamInvitation.deleteMany({ where: { teamId: id } })
+           await db.doaiTeamApplication.deleteMany({ where: { teamId: id } })
+           await db.doaiTeamMember.deleteMany({ where: { teamId: id } })
+           await db.doaiTeam.delete({ where: { id } })
+@@ -257,7 +258,12 @@ export class DoaiService {
+   async applications(user?: RequestUser) {
+     const uid = this.uid(user)
+     const rows = await this.db.doaiTeamApplication.findMany({ where: { OR: [{ fromUserId: uid }, { toUserId: uid }] }, orderBy: { createdAt: 'desc' }, take: 500 })
+-    const mapped = await Promise.all(rows.map(r => this.application(r)))
++    const invitations = await this.db.doaiTeamInvitation.findMany({ where: { OR: [{ fromUserId: uid }, { toUserId: uid }] }, orderBy: { createdAt: 'desc' }, take: 500 })
++    const mapped: Data[] = await Promise.all([
++      ...rows.map(async r => ({ ...await this.application(r), kind: 'application' })),
++      ...invitations.map(async r => ({ ...await this.application(r), kind: 'invitation' })),
++    ])
++    mapped.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+     return { ok: true, received: mapped.filter(r => r.toUserId === uid && r.status === 'pending'), sent: mapped.filter(r => r.fromUserId === uid) }
+   }
+   async apply(body: Data, user?: RequestUser) {
+@@ -279,6 +285,50 @@ export class DoaiService {
+     })
+     return { ok: true, application: await this.application(result) }
+   }
++  async invite(body: Data, user?: RequestUser) {
++    const uid = this.uid(user), teamId = text(body.teamId, 36, true), toUserId = text(body.toUserId, 36, true)
++    const message = text(body.message, 1000)
++    if (uid === toUserId) fail('不能邀请自己')
++    const result = await this.tx(async db => {
++      const team = await this.team(teamId, db)
++      if (!team || team.eventId !== EVENT) fail('战队不存在', 404)
++      if (team.leaderId !== uid) fail('只有队长可以邀请成员', 403)
++      await this.user(toUserId, db)
++      if (!(await this.mutual(uid, toUserId, db))) fail('需要双方互相关注后才能邀请', 403)
++      if (team.members.length >= 5) fail('战队已满员', 409)
++      if (await db.doaiTeamMember.findUnique({ where: { eventId_userId: { eventId: EVENT, userId: toUserId } } })) fail('对方已有战队', 409)
++      const where = { teamId_toUserId: { teamId, toUserId } }
++      const existing = await db.doaiTeamInvitation.findUnique({ where })
++      if (existing?.status === 'pending') fail('邀请正在处理中', 409)
++      const row = await db.doaiTeamInvitation.upsert({ where,
++        create: { id: randomUUID(), teamId, fromUserId: uid, toUserId, message },
++        update: { fromUserId: uid, message, status: 'pending', handledBy: null, handledAt: null } })
++      await this.notice(db, toUserId, 'team', '收到新的战队邀请', `战队《${team.name}》邀请你加入`, { applicationId: row.id })
++      return row
++    })
++    return { ok: true, application: { ...await this.application(result), kind: 'invitation' } }
++  }
++  async handleInvitation(id: string, action: string, user?: RequestUser) {
++    const uid = this.uid(user)
++    id = text(id, 36, true)
++    if (!['accept', 'decline'].includes(action)) fail('action 须为 accept 或 decline')
++    return this.tx(async db => {
++      const row = await db.doaiTeamInvitation.findUnique({ where: { id } })
++      if (!row) fail('邀请不存在', 404)
++      if (row.toUserId !== uid) fail('只有被邀请人可以处理邀请', 403)
++      if (row.status !== 'pending') fail('该邀请已处理', 409)
++      const team = await this.team(row.teamId, db)
++      if (!team || team.eventId !== EVENT || team.leaderId !== row.fromUserId) fail('战队已解散或邀请已失效', 404)
++      if (action === 'accept') {
++        if (team.members.length >= 5) fail('战队已满员', 409)
++        if (await db.doaiTeamMember.findUnique({ where: { eventId_userId: { eventId: EVENT, userId: uid } } })) fail('您已有战队', 409)
++        await db.doaiTeamMember.create({ data: { id: randomUUID(), eventId: EVENT, teamId: team.id, userId: uid } })
++      }
++      await db.doaiTeamInvitation.update({ where: { id }, data: { status: action === 'accept' ? 'accepted' : 'declined', handledBy: uid, handledAt: new Date() } })
++      await this.notice(db, row.fromUserId, 'team', action === 'accept' ? '战队邀请已被接受' : '战队邀请被拒绝', `战队《${team.name}》的邀请已处理`)
++      return { ok: true, team: await this.team(team.id, db) }
++    })
++  }
+   async handleApplication(id: string, action: string, user?: RequestUser) {
+     const uid = this.uid(user)
+     id = text(id, 36, true)
+@@ -292,6 +342,7 @@ export class DoaiService {
+       if (row.status !== 'pending') fail('该申请已处理', 409)
+       if (action === 'accept') {
+         if (team.members.length >= 5) fail('战队已满员', 409)
++        if (await db.doaiTeamMember.findUnique({ where: { eventId_userId: { eventId: EVENT, userId: row.fromUserId } } })) fail('申请人已有战队', 409)
+         await db.doaiTeamMember.create({ data: { id: randomUUID(), eventId: EVENT, teamId: team.id, userId: row.fromUserId } })
+       }
+       await db.doaiTeamApplication.update({ where: { id }, data: { status: action === 'accept' ? 'accepted' : 'declined', handledBy: uid, handledAt: new Date() } })
+@@ -307,23 +358,34 @@ export class DoaiService {
+   async exchange(body: Data, user?: RequestUser) {
+     const uid = this.uid(user), peerId = (await this.user(text(body.toUserId, 36, true))).id
+     if (uid === peerId) fail('不能与自己交换名片')
+-    return this.tx(async db => {
++    const exchangePair = () => this.tx(async db => {
+       const profile = await db.doaiProfile.findUnique({ where: { userId: peerId } })
+       if (!profile?.isPublic || !profile.allowCardExchange) fail('对方未开放名片交换', 403)
+       const from = await this.card(uid, db), to = await this.card(peerId, db)
+-      const row = await db.doaiCardExchange.create({ data: { id: randomUUID(), fromUserId: uid, toUserId: peerId,
+-        pairKey: [uid, peerId].sort().join(':'), fromCard: from as Prisma.InputJsonValue, toCard: to as Prisma.InputJsonValue } })
+-      await this.notice(db, peerId, 'card', '收到一张新的数字名片', `${from.name} 与你交换了数字名片`)
+-      return { ok: true, exchange: { id: row.id, fromUserId: uid, toUserId: peerId, from, to, at: row.createdAt.toISOString() } }
++      const createdId = randomUUID()
++      const row = await db.doaiCardExchange.upsert({ where: { pairKey: [uid, peerId].sort().join(':') }, update: {},
++        create: { id: createdId, fromUserId: uid, toUserId: peerId,
++          pairKey: [uid, peerId].sort().join(':'), fromCard: from as Prisma.InputJsonValue, toCard: to as Prisma.InputJsonValue } })
++      if (row.id === createdId) await this.notice(db, peerId, 'card', '收到一张新的数字名片', `${from.name} 与你交换了数字名片`)
++      const outgoing = row.fromUserId === uid
++      return { ok: true, exchange: { id: row.id, fromUserId: uid, toUserId: peerId, direction: outgoing ? 'out' : 'in',
++        from: object(outgoing ? row.fromCard : row.toCard), to: object(outgoing ? row.toCard : row.fromCard), at: row.createdAt.toISOString() } }
+     })
++    try { return await exchangePair() } catch (error) {
++      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return exchangePair()
++      throw error
++    }
+   }
+   async notifications(user?: RequestUser) {
+     const uid = this.uid(user)
+     const rows = await this.db.doaiNotification.findMany({ where: { toUserId: { in: [uid, 'all'] } }, orderBy: { createdAt: 'desc' }, take: 500 })
+     const reads = await this.db.doaiNotificationRead.findMany({ where: { userId: uid, notificationId: { in: rows.map(r => r.id) } } })
+     const applications = await this.db.doaiTeamApplication.findMany({ where: { id: { in: rows.flatMap(r => r.applicationId ? [r.applicationId] : []) } } })
++    const invitations = await this.db.doaiTeamInvitation.findMany({ where: { id: { in: rows.flatMap(r => r.applicationId ? [r.applicationId] : []) } } })
+     return { ok: true, notifications: rows.map(r => ({ ...r, to: r.toUserId, time: r.createdAt.toISOString(),
+-      read: reads.some(x => x.notificationId === r.id), applicationStatus: applications.find(a => a.id === r.applicationId)?.status })) }
++      read: reads.some(x => x.notificationId === r.id),
++      applicationKind: invitations.some(a => a.id === r.applicationId) ? 'invitation' : 'application',
++      applicationStatus: applications.find(a => a.id === r.applicationId)?.status || invitations.find(a => a.id === r.applicationId)?.status })) }
+   }
+   async readNotifications(body: Data, user?: RequestUser) {
+     const uid = this.uid(user)
+diff --git a/prisma/migrations/sql/20261026_add_doai_team_invitations.sql b/prisma/migrations/sql/20261026_add_doai_team_invitations.sql
+new file mode 100644
+--- /dev/null
++++ b/prisma/migrations/sql/20261026_add_doai_team_invitations.sql
+@@ -0,0 +1,21 @@
++-- DOAI 战队邀请增量建表，MySQL 8.x；先执行此 SQL，再发布新的 DoaiModule。
++-- 目标为 DATABASE_URL 指向的 atomhubv2 业务库，不在 atom_users 账号权威库执行。
++-- 独立保存队长发出的邀请；现有 doai_team_applications 继续保存成员申请。
++-- 不修改旧表、账号、权限或数据；不新增跨模块物理外键。
++-- 可重复执行。回滚应用时保留本表，删除数据须另行确认与备份。
++CREATE TABLE IF NOT EXISTS `doai_team_invitations` (
++  `id` VARCHAR(36) NOT NULL COMMENT '业务主键，服务端 UUID',
++  `team_id` VARCHAR(36) NOT NULL COMMENT '邀请加入的 doai_teams.id',
++  `from_user_id` VARCHAR(36) NOT NULL COMMENT '发起队长 users.id，由会话推导',
++  `to_user_id` VARCHAR(36) NOT NULL COMMENT '被邀请人 users.id，只有本人可以处理',
++  `message` VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '邀请留言',
++  `status` VARCHAR(24) NOT NULL DEFAULT 'pending' COMMENT 'pending/accepted/declined',
++  `handled_by` VARCHAR(36) NULL COMMENT '处理人 users.id',
++  `handled_at` DATETIME(3) NULL COMMENT '处理时间',
++  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
++  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最后更新时间',
++  PRIMARY KEY (`id`),
++  UNIQUE KEY `doai_team_invitations_team_id_to_user_id_key` (`team_id`, `to_user_id`),
++  KEY `doai_team_invitations_from_user_id_created_at_idx` (`from_user_id`, `created_at`),
++  KEY `doai_team_invitations_to_user_id_status_created_at_idx` (`to_user_id`, `status`, `created_at`)
++) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT='DOAI 队长邀请成员入队，独立于成员申请';

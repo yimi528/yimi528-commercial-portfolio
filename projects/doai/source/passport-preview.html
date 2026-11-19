@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DOAI · 银白玻璃 Passport</title>
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;}body{min-height:100svh;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 28%,#fff 0%,#f2f2f0 48%,#e5e5e3 100%);font-family:Arial,Helvetica,sans-serif;color:#101113;padding:56px 24px;-webkit-font-smoothing:antialiased}
+    main{width:min(100%,1080px)}
+    .card{position:relative;isolation:isolate;width:100%;aspect-ratio:1.75;border-radius:43px;border:1px solid #bcc8d0;background:linear-gradient(115deg,rgba(255,255,255,.92),rgba(255,255,255,.32) 42%,rgba(214,220,225,.38) 77%,rgba(255,255,255,.8)),linear-gradient(175deg,#f2f3f3,#e0e3e6);box-shadow:inset 0 0 0 2px #ffffffd9,inset 0 0 0 5px #e2e8ed,inset 0 0 0 7px #ffffffbd,inset 0 0 15px 10px #fff9,0 28px 32px -25px #545b6666,0 70px 70px -68px #66747d99;overflow:hidden;container-type:inline-size}
+    .card:before{content:"";position:absolute;z-index:-1;inset:8px;border-radius:35px;background:linear-gradient(125deg,#ffffff9c,transparent 40%,#c3d3e41a 80%,#fff8);box-shadow:inset 1px 1px 2px #fff,inset -2px -1px 4px #b6cfe680;pointer-events:none}
+    .grain{position:absolute;inset:0;opacity:.13;mix-blend-mode:multiply;pointer-events:none;z-index:2}
+    .rim{position:absolute;inset:3px;border-radius:40px;border:1px solid #fff;box-shadow:inset -2px -1px 5px #9fc4e773,1px 1px 4px #fff;pointer-events:none}
+    .content{position:relative;padding:7.3% 7.4% 4.1%;height:100%;display:flex;flex-direction:column}
+    header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.brand{width:31.5%}.logo{display:block;width:100%;height:auto}.passport{font-size:1.95cqw;letter-spacing:.64em;margin-top:12px;color:#62656a;line-height:1;padding-left:2px}
+    .status{font-family:'SFMono-Regular',Consolas,monospace;font-size:1.65cqw;letter-spacing:.03em;display:flex;align-items:center;gap:12px;white-space:nowrap;padding-top:1px;color:#555b60}.dot{width:1.42cqw;height:1.42cqw;flex:none;border-radius:50%;background:#a8c6bb;box-shadow:inset 0 1px 2px #ffffff50}
+    .identity{margin-top:auto;margin-bottom:5.1%;position:relative;z-index:1}.label{font-family:'SFMono-Regular',Consolas,monospace;font-size:1.55cqw;font-weight:400;letter-spacing:.18em;color:#65696e;line-height:1.4}.name{font-size:8.2cqw;line-height:1.08;letter-spacing:-.052em;font-weight:600;margin:10px 0 0 -4px}
+    .identifier{position:relative;z-index:1}.hash{font-family:'SFMono-Regular',Consolas,monospace;font-size:1.9cqw;letter-spacing:.025em;margin-top:9px;color:#33383d}
+    footer{display:flex;justify-content:space-between;border-top:1px solid #8c929880;padding-top:2%;margin-top:3.8%;font-family:'SFMono-Regular',Consolas,monospace;font-size:1.9cqw;letter-spacing:.025em;color:#41474c}
+    .orbit{position:absolute;width:39%;height:61%;right:5.3%;top:20.5%;pointer-events:none;opacity:.8}.nfc{position:absolute;right:5.8%;bottom:19.5%;width:4.2%;color:#969fab}
+    @media(max-width:600px){body{padding:24px 15px}.card{border-radius:23px}.card:before{inset:5px;border-radius:18px}.rim{border-radius:21px}.status{gap:5px}.passport{margin-top:7px}.name{margin-top:5px;margin-left:-1px}.hash{margin-top:5px}}
+  </style>
+</head>
+<body>
+<main>
+  <article class="card" aria-label="DOAI Passport，创客 yimi528 的数字身份卡">
+    <svg class="grain" width="100%" height="100%" aria-hidden="true"><filter id="noise"><feTurbulence type="fractalNoise" baseFrequency=".78" numOctaves="3" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#noise)" opacity=".5"/></svg>
+    <div class="rim"></div>
+    <svg class="orbit" viewBox="0 0 420 400" fill="none" aria-hidden="true">
+      <defs>
+        <filter id="emboss" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="1.2" dy="1.6" stdDeviation="1.2" flood-color="#8b97a4" flood-opacity=".36"/><feDropShadow dx="-1.2" dy="-1.5" stdDeviation=".8" flood-color="#ffffff" flood-opacity="1"/></filter>
+        <radialGradient id="sphere" cx="30%" cy="24%"><stop stop-color="#fff" stop-opacity=".96"/><stop offset=".45" stop-color="#e9edf0" stop-opacity=".75"/><stop offset="1" stop-color="#bfc9d2" stop-opacity=".6"/></radialGradient>
+      </defs>
+      <g filter="url(#emboss)" stroke="#fff" stroke-opacity=".58" stroke-width="1.15">
+        <ellipse cx="210" cy="201" rx="176" ry="175" transform="rotate(-22 210 201)"/>
+        <ellipse cx="210" cy="201" rx="176" ry="104" transform="rotate(-44 210 201)"/>
+        <ellipse cx="210" cy="201" rx="182" ry="79" transform="rotate(-17 210 201)"/>
+        <ellipse cx="210" cy="201" rx="118" ry="179" transform="rotate(32 210 201)"/>
+      </g>
+      <circle cx="305" cy="178" r="14" fill="url(#sphere)" stroke="#fff" stroke-opacity=".5" filter="url(#emboss)"/>
+    </svg>
+    <svg class="nfc" viewBox="0 0 50 60" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-label="NFC"><path d="M9 23Q17 30 9 37M18 16Q32 30 18 44M28 9Q47 30 28 51M38 3Q60 30 38 57"/></svg>
+    <div class="content">
+      <header>
+        <div class="brand">
+          <svg class="logo" viewBox="0 0 340 80" role="img" aria-label="DOAI">
+            <g fill="#101113" fill-rule="evenodd">
+              <path d="M0 10H48C74 10 88 23 88 45S74 80 48 80H0ZM19 28V62H46C61 62 68 57 68 45S61 28 46 28Z"/>
+              <path d="M144 9C179 9 195 20 195 45S179 81 144 81S94 70 94 45S110 9 144 9ZM144 28C123 28 114 31 114 45S123 62 144 62S175 59 175 45S165 28 144 28Z"/>
+              <path d="M235 10H259L303 80H280L272 66H222L214 80H191ZM247 25L232 49H262Z"/>
+              <path d="M314 20H333V80H314Z"/>
+            </g>
+            <path fill="#087dff" d="M314 0H333V15H314Z"/>
+          </svg>
+          <div class="passport">PASSPORT</div>
+        </div>
+        <div class="status"><span class="dot"></span>PROFILE · LINKED</div>
+      </header>
+      <section class="identity"><div class="label">CREATOR NAME</div><h1 class="name">yimi528</h1></section>
+      <section class="identifier"><div class="label">MAKER IDENTIFIER</div><div class="hash">2d28e8db0364420bb85eeaec710e1998</div></section>
+      <footer><span>agent · harness</span><span>2026.11</span></footer>
+    </div>
+  </article>
+</main>
+</body>
+</html>

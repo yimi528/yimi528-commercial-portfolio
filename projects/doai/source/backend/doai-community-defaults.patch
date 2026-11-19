@@ -1,0 +1,40 @@
+--- a/src/modules/doai.service.ts
++++ b/src/modules/doai.service.ts
+@@ -80,7 +80,7 @@
+   }
+   async me(user?: RequestUser) {
+     const uid = this.uid(user)
+-    const profile = await this.db.doaiProfile.upsert({ where: { userId: uid }, update: {}, create: { userId: uid, skills: [] } })
++    const profile = await this.db.doaiProfile.upsert({ where: { userId: uid }, update: {}, create: { userId: uid, skills: [], isPublic: true } })
+     const access = await this.access(uid)
+     return { ok: true, isAdmin: access?.role === 'super_admin', operatorChannel: access?.role === 'channel_operator' ? access.channel : null, channelPolicy: 'scoped-v1', profile }
+   }
+@@ -157,7 +157,7 @@
+     const data = { name: text(body.name, 64), avatar: url(body.avatar), city: text(body.city, 64), bio: text(body.bio, 1000), skills: skills.map(skill => text(skill, 100)).filter(Boolean) }
+     return this.tx(async db => {
+       await this.user(userId, db)
+-      const profile = await db.doaiProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data })
++      const profile = await db.doaiProfile.upsert({ where: { userId }, create: { userId, isPublic: true, ...data }, update: data })
+       const access = await this.access(userId, db)
+       return { ok: true, profile, isAdmin: access?.role === 'super_admin', operatorChannel: access?.role === 'channel_operator' ? access.channel : null }
+     })
+@@ -525,7 +525,7 @@
+     }
+     if (body.isPublicInSquare !== undefined) { if (typeof body.isPublicInSquare !== 'boolean') fail('公开状态无效'); data.isPublic = body.isPublicInSquare }
+     if (body.allowCardExchange !== undefined) { if (typeof body.allowCardExchange !== 'boolean') fail('名片状态无效'); data.allowCardExchange = body.allowCardExchange }
+-    const profile = await this.db.doaiProfile.upsert({ where: { userId }, create: { ...(data as Prisma.DoaiProfileCreateInput), userId, skills: (data.skills ?? []) as Prisma.InputJsonValue }, update: data })
++    const profile = await this.db.doaiProfile.upsert({ where: { userId }, create: { isPublic: true, ...(data as Prisma.DoaiProfileCreateInput), userId, skills: (data.skills ?? []) as Prisma.InputJsonValue }, update: data })
+     return { ok: true, profile }
+   }
+   async avatar(user?: RequestUser) { const row = await this.user(this.uid(user)); return { ok: true, avatar: row.avatarUrl || '', source: 'atomclub' } }
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -833,7 +833,7 @@
+   bio               String?  @db.VarChar(1000)
+   city              String?  @db.VarChar(64)
+   skills            Json
+-  isPublic          Boolean  @default(false) @map("is_public")
++  isPublic          Boolean  @default(true) @map("is_public")
+   allowCardExchange Boolean  @default(true) @map("allow_card_exchange")
+   // 组队广场「达人名片」扩展字段；为空时前端按主站资料兜底展示。
+   availableTime     String   @default("") @map("available_time") @db.VarChar(64)

@@ -1,0 +1,56 @@
+{
+  "source": "codex-clipboard-ee7d8f26-fd7e-4507-9047-7a925a16ec54.png",
+  "sourceSha256": "bd69d97522e17130df04a56a9e3f7f15bd3ad58b85bc9954812d2c3d0c7dc6f9",
+  "sourceSize": [
+    1080,
+    15010
+  ],
+  "method": "Direct square crops from the user-provided poster, saved as lossless WebP without resizing, retouching or generation. Coordinates are [left, top, right, bottom].",
+  "assets": [
+    {
+      "file": "poster-compete.webp",
+      "crop": [
+        540,
+        2730,
+        1080,
+        3270
+      ]
+    },
+    {
+      "file": "poster-explore.webp",
+      "crop": [
+        0,
+        790,
+        540,
+        1330
+      ]
+    },
+    {
+      "file": "poster-learn.webp",
+      "crop": [
+        0,
+        1990,
+        540,
+        2530
+      ]
+    },
+    {
+      "file": "poster-play.webp",
+      "crop": [
+        540,
+        1420,
+        1080,
+        1960
+      ]
+    },
+    {
+      "file": "poster-collaborate.webp",
+      "crop": [
+        0,
+        3470,
+        540,
+        4010
+      ]
+    }
+  ]
+}

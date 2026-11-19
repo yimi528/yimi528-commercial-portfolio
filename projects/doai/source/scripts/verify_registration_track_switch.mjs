@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import puppeteer from 'puppeteer-core';
+const site = process.env.TEST_SITE || 'http://127.0.0.1:3000';
+const browser = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+const page = await browser.newPage(); await page.setViewport({ width: 1440, height: 1000 });
+let existingTeam = false, posts = 0;
+const errors = []; page.on('pageerror', error => errors.push(error.message));
+await page.setRequestInterception(true);
+page.on('request', request => {
+ const url = new URL(request.url()); if (url.origin !== new URL(site).origin) return request.abort();
+ if (!url.pathname.includes('/api/')) return request.continue();
+ const route = url.searchParams.get('__p') || url.pathname.split('/api/doai/')[1];
+ const reply = (data, status = 200) => request.respond({ status, contentType: 'application/json', body: JSON.stringify(data) });
+ if (request.method() !== 'GET') posts++;
+ if (url.pathname.endsWith('/api/user/me') || url.pathname.endsWith('/api/user') && route === 'me') return reply({ id: 'qa-captain', name: 'QA Captain', city: '上海', phone: '13800000000' });
+ if (route === 'my-team') return reply({ ok: true, userId: 'qa-captain', team: existingTeam ? { id: 'qa-team', name: '自由创意测试队', track: 'creator', leaderId: 'qa-captain', members: [{ id: 'qa-captain', name: 'QA Captain', roleTitle: '队长', isLeader: true }] } : null });
+ if (route === 'me') return reply({ ok: true, isAdmin: false, channelPolicy: 'scoped-v1' });
+ if (route === 'forum-bookmarks') return reply({ ok: true, userId: 'qa-captain', bookmarks: [] });
+ return reply({ ok: true, config: null, forums: [], teams: [], registrations: [], tickets: [], cards: [], notifications: [], recruitments: [], talents: [] });
+});
+const click = label => page.evaluate(label => { const button = [...document.querySelectorAll('main button')].find(n => n.textContent.trim() === label || label === '个人独立参赛' && n.textContent.includes(label)); if (!button) throw new Error(`Missing ${label}`); button.click(); }, label);
+const text = value => page.waitForFunction(value => document.querySelector('main')?.textContent.includes(value), {}, value);
+const value = selector => page.$eval(selector, n => n.value);
+const selected = () => page.$eval('button[aria-pressed="true"]', n => n.textContent.trim());
+const fillProfile = async () => {
+ await page.waitForFunction(() => document.querySelector('input[placeholder="请输入姓名"]')?.value === 'QA Captain');
+ await page.select('#registration-channel', 'public');
+ await page.type('#registration-email', 'audit@example.invalid'); await page.type('#registration-bio', '保留个人简介草稿');
+ await page.type('#registration-organization', '测试组织'); await page.type('#registration-position', '工程师'); await page.type('#registration-age', '25');
+};
+try {
+ await page.goto(`${site}/register/creator/ai-infra`, { waitUntil: 'networkidle2' }); await fillProfile();
+ await click('FDE 赛道 · 企业命题'); await page.waitForFunction(() => location.pathname.endsWith('/register/industry'));
+ assert.equal(await value('#registration-email'), 'audit@example.invalid'); assert.equal(await value('#registration-bio'), '保留个人简介草稿'); assert.equal(await value('#registration-organization'), '测试组织');
+ await page.goBack({ waitUntil: 'domcontentloaded' }); await page.waitForFunction(() => document.querySelector('#entry-direction')?.value === 'ai-infra');
+ assert.equal(await selected(), '自由创意赛道'); assert.equal(await value('#registration-email'), 'audit@example.invalid');
+ await click('下一步：参赛模式'); await text('个人独立参赛'); await click('个人独立参赛'); await click('下一步：项目与作品');
+ await page.waitForSelector('input[placeholder*="NeuroFlow"]'); await page.type('input[placeholder*="NeuroFlow"]', '保留项目草稿'); await page.type('textarea[placeholder*="100-200"]', '切换赛道后仍然保留的项目介绍');
+ await click('FDE 赛道 · 企业命题'); await page.waitForFunction(() => location.pathname.endsWith('/register/industry'));
+ assert.equal(await value('input[placeholder*="NeuroFlow"]'), '保留项目草稿'); assert.equal(await value('textarea[placeholder*="100-200"]'), '切换赛道后仍然保留的项目介绍');
+ await page.screenshot({ path: '/tmp/doai-fixed-registration-draft.png' });
+ existingTeam = true; await page.goto(`${site}/register/industry/b-prop-fs`, { waitUntil: 'networkidle2' }); await text('现有战队「自由创意测试队」');
+ assert.equal(await selected(), 'FDE 赛道 · 企业命题'); assert.equal(await value('#entry-direction'), 'b-prop-fs');
+ await fillProfile(); await click('下一步：参赛模式'); await click('下一步：项目与作品'); await text('报名赛道与现有战队不一致');
+ assert.equal(await page.$('input[placeholder*="NeuroFlow"]'), null);
+ await click('使用战队所属赛道'); await page.waitForFunction(() => location.pathname.endsWith('/register/creator')); assert.equal(await selected(), '自由创意赛道');
+ await click('FDE 赛道 · 企业命题'); await text('现有战队「自由创意测试队」'); await click('改为个人参赛');
+ assert.equal(await selected(), 'FDE 赛道 · 企业命题'); assert.ok(!(await page.$eval('main', n => n.textContent)).includes('现有战队「自由创意测试队」'));
+ await click('下一步：项目与作品'); await page.waitForSelector('input[placeholder*="NeuroFlow"]');
+ await page.setViewport({ width: 390, height: 844 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+ await page.screenshot({ path: '/tmp/doai-fixed-registration-mobile.png' }); assert.deepEqual(errors, []); assert.equal(posts, 0);
+ console.log('PASS: profile and project drafts retained across track changes; browser back restores brief; existing team mismatch is explicit and blocks team submission; both resolution actions work; mobile fit; no writes.');
+} finally { await browser.close(); }

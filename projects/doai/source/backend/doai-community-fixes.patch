@@ -1,0 +1,204 @@
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -833,7 +833,7 @@
+   bio               String?  @db.VarChar(1000)
+   city              String?  @db.VarChar(64)
+   skills            Json
+-  isPublic          Boolean  @default(false) @map("is_public")
++  isPublic          Boolean  @default(true) @map("is_public")
+   allowCardExchange Boolean  @default(true) @map("allow_card_exchange")
+   // 组队广场「达人名片」扩展字段；为空时前端按主站资料兜底展示。
+   availableTime     String   @default("") @map("available_time") @db.VarChar(64)
+--- a/src/common/doai-actor.spec.ts
++++ b/src/common/doai-actor.spec.ts
+@@ -1,3 +1,4 @@
++import { checkDoaiActor } from './doai-actor'
+ import { Controller, Get, Post, Req, Res } from '@nestjs/common'
+ import { APP_GUARD } from '@nestjs/core'
+ import { Test } from '@nestjs/testing'
+@@ -160,3 +161,13 @@
+     expect(result.body.owner).toBe('b')
+   })
+ })
++
++
++describe('public team details keep personal membership private', () => {
++  it('permits anonymous team details but rejects anonymous teams/mine and private writes', () => {
++    const req = { headers: { 'x-doai-actor': '__anonymous__' }, userId: 'cookie-owner' }
++    expect(() => checkDoaiActor(req, '/doai/teams/older-team', 'GET')).not.toThrow()
++    expect(() => checkDoaiActor(req, '/doai/teams/mine', 'GET')).toThrow()
++    expect(() => checkDoaiActor(req, '/doai/teams/older-team/update', 'POST')).toThrow()
++  })
++})
+--- a/src/common/doai-actor.ts
++++ b/src/common/doai-actor.ts
+@@ -28,7 +28,7 @@
+       '/doai/users',
+       '/doai/teams',
+       '/doai/wx-articles',
+-    ].includes(path)
++    ].includes(path) || (method === 'GET' && /^\/doai\/teams\/(?!mine$)[^/]+$/.test(path))
+   )
+     return
+   const publicPersonalized =
+--- a/src/modules/doai.module.ts
++++ b/src/modules/doai.module.ts
+@@ -1,4 +1,4 @@
+-import { Body, Controller, Delete, Get, Module, Param, Post } from '@nestjs/common'
++import { Body, Controller, Delete, Get, Module, Param, Post, Query } from '@nestjs/common'
+ import { CurrentUser } from '../common/current-user.decorator'
+ import type { RequestUser } from '../common/current-user.decorator'
+ import { PrismaModule } from '../prisma/prisma.module'
+@@ -40,9 +40,10 @@
+   @Get('follows') follows(@CurrentUser() user?: RequestUser) { return this.service.follows(user) }
+   @Post('follows') follow(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.follow(body, false, user) }
+   @Delete('follows') unfollow(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.follow(body, true, user) }
+-  @Get('teams') teams() { return this.service.teams() }
++  @Get('teams') teams(@Query() query: Record<string, string>) { return this.service.teams(query) }
+   @Post('teams') createTeam(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.createTeam(body, user) }
+   @Get(['my-team', 'teams/mine']) myTeam(@CurrentUser() user?: RequestUser) { return this.service.myTeam(user) }
++  @Get('teams/:id') teamDetail(@Param('id') id: string) { return this.service.publicTeamDetail(id) }
+   @Post('team-join') joinTeam(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.joinTeam(body, user) }
+   @Post('team-update') editTeam(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.editTeam(body.teamId, 'update', body, user) }
+   @Post('teams/:id/update') editTeamPath(@Param('id') id: string, @Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.editTeam(id, 'update', body, user) }
+--- a/src/modules/doai.service.spec.ts
++++ b/src/modules/doai.service.spec.ts
+@@ -1229,3 +1229,62 @@
+     expect((await service.cancelTicket(result.ticket.id,actor)).ok).toBe(true)
+   })
+ })
++
++ describe('public community pagination and profile defaults', () => {
++  const row = { id: 'older-team', eventId: 'doai-2026', name: 'Older team', track: 'creator', leaderId: 'captain', description: 'Public description', inviteCode: 'secret-code' }
++  function directory() {
++    const { service, db } = setup(), data = db as any
++    data.doaiTeam.count = jest.fn(async () => 1001)
++    data.doaiTeam.findMany = jest.fn(async () => [row])
++    data.doaiTeam.findUnique.mockResolvedValue(row)
++    data.doaiTeamMember.findMany.mockResolvedValue([{ userId: 'captain', teamId: row.id, isLeader: true, roleTitle: 'Captain' }])
++    return { service, db: data }
++  }
++  it('queries past the former 500-team boundary with a stable bounded database page', async () => {
++    const { service, db } = directory()
++    const result = await service.teams({ page: '84', pageSize: '6', track: 'creator' })
++    expect(result).toMatchObject({ total: 1001, page: 84, pageSize: 6 })
++    expect(db.doaiTeam.findMany.mock.calls[0][0]).toMatchObject({ where: { eventId: 'doai-2026', track: 'creator' }, skip: 498, take: 6, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] })
++    expect(result.teams[0]).not.toHaveProperty('eventId')
++    expect(result.teams[0]?.inviteCode).toBe('')
++  })
++  it('clamps a page after teams are deleted, and rejects invalid pagination', async () => {
++    const { service, db } = directory()
++    db.doaiTeam.count.mockResolvedValue(2)
++    expect(await service.teams({ page: '84', pageSize: '6' })).toMatchObject({ total: 2, page: 1 })
++    expect(db.doaiTeam.findMany.mock.calls[0][0].skip).toBe(0)
++    for (const query of [{ page: '0' }, { page: '-1' }, { page: '1.5' }, { pageSize: '61' }, { page: '2', track: 'invalid' }]) await status(service.teams(query), 400)
++  })
++  it('finds a single older team without querying the bounded list or leaking its code', async () => {
++    const { service, db } = directory()
++    const result = await service.publicTeamDetail(row.id)
++    expect(result.team).toMatchObject({ id: row.id, name: row.name, inviteCode: '' })
++    expect(db.doaiTeam.findMany).not.toHaveBeenCalled()
++    db.doaiTeam.findUnique.mockResolvedValue({ ...row, eventId: 'another-event' })
++    await status(service.publicTeamDetail(row.id), 404)
++    db.doaiTeam.findUnique.mockResolvedValue(null)
++    await status(service.publicTeamDetail(row.id), 404)
++  })
++  it('defaults new profiles to public without reopening an existing hidden profile', async () => {
++    const { service, db } = setup()
++    await service.me(actor)
++    expect(db.doaiProfile.upsert.mock.calls[0][0]).toMatchObject({ create: { isPublic: true }, update: {} })
++    db.doaiProfile.upsert.mockResolvedValue({ userId: actor.id, isPublic: false } as any)
++    expect((await service.me(actor)).profile.isPublic).toBe(false)
++    await service.updateProfile({ isPublicInSquare: false }, actor)
++    const args = db.doaiProfile.upsert.mock.calls.at(-1)![0]
++    expect(args.create.isPublic).toBe(false)
++    expect(args.update.isPublic).toBe(false)
++  })
++ })
++
++
++it('searches member names across the event before applying the team page', async () => {
++  const { service, db } = setup(), data = db as any
++  data.user.findMany.mockResolvedValue([{ id: 'matched-user', name: 'Keyword' }])
++  data.doaiTeamMember.findMany.mockResolvedValue([{ teamId: 'older-team' }])
++  data.doaiTeam.count = jest.fn(async () => 1)
++  data.doaiTeam.findMany = jest.fn(async () => [])
++  await service.teams({ page: '1', pageSize: '6', search: 'Keyword' })
++  expect(data.doaiTeam.count.mock.calls[0][0].where).toMatchObject({ eventId: 'doai-2026', OR: [{ name: { contains: 'Keyword' } }, { description: { contains: 'Keyword' } }, { id: { in: ['older-team'] } }] })
++})
+--- a/src/modules/doai.service.ts
++++ b/src/modules/doai.service.ts
+@@ -80,7 +80,7 @@
+   }
+   async me(user?: RequestUser) {
+     const uid = this.uid(user)
+-    const profile = await this.db.doaiProfile.upsert({ where: { userId: uid }, update: {}, create: { userId: uid, skills: [] } })
++    const profile = await this.db.doaiProfile.upsert({ where: { userId: uid }, update: {}, create: { userId: uid, skills: [], isPublic: true } })
+     const access = await this.access(uid)
+     return { ok: true, isAdmin: access?.role === 'super_admin', operatorChannel: access?.role === 'channel_operator' ? access.channel : null, channelPolicy: 'scoped-v1', profile }
+   }
+@@ -157,7 +157,7 @@
+     const data = { name: text(body.name, 64), avatar: url(body.avatar), city: text(body.city, 64), bio: text(body.bio, 1000), skills: skills.map(skill => text(skill, 100)).filter(Boolean) }
+     return this.tx(async db => {
+       await this.user(userId, db)
+-      const profile = await db.doaiProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data })
++      const profile = await db.doaiProfile.upsert({ where: { userId }, create: { userId, isPublic: true, ...data }, update: data })
+       const access = await this.access(userId, db)
+       return { ok: true, profile, isAdmin: access?.role === 'super_admin', operatorChannel: access?.role === 'channel_operator' ? access.channel : null }
+     })
+@@ -525,7 +525,7 @@
+     }
+     if (body.isPublicInSquare !== undefined) { if (typeof body.isPublicInSquare !== 'boolean') fail('公开状态无效'); data.isPublic = body.isPublicInSquare }
+     if (body.allowCardExchange !== undefined) { if (typeof body.allowCardExchange !== 'boolean') fail('名片状态无效'); data.allowCardExchange = body.allowCardExchange }
+-    const profile = await this.db.doaiProfile.upsert({ where: { userId }, create: { ...(data as Prisma.DoaiProfileCreateInput), userId, skills: (data.skills ?? []) as Prisma.InputJsonValue }, update: data })
++    const profile = await this.db.doaiProfile.upsert({ where: { userId }, create: { isPublic: true, ...(data as Prisma.DoaiProfileCreateInput), userId, skills: (data.skills ?? []) as Prisma.InputJsonValue }, update: data })
+     return { ok: true, profile }
+   }
+   async avatar(user?: RequestUser) { const row = await this.user(this.uid(user)); return { ok: true, avatar: row.avatarUrl || '', source: 'atomclub' } }
+@@ -553,10 +553,42 @@
+     const users = await db.user.findMany({ where: { id: { in: members.map(m => m.userId) } }, select: { id: true, name: true } })
+     return { ...row, desc: row.description, members: members.map(m => ({ id: m.userId, name: users.find(u => u.id === m.userId)?.name || '', roleTitle: m.roleTitle, isLeader: m.isLeader })) }
+   }
+-  async teams() {
+-    const rows = await this.db.doaiTeam.findMany({ where: { eventId: EVENT }, orderBy: { createdAt: 'desc' }, take: 500 })
+-    const teams = await Promise.all(rows.map(row => this.team(row.id)))
+-    return { ok: true, teams: teams.map(team => team && ({ ...team, inviteCode: '' })) }
++  private publicTeam(team: NonNullable<Awaited<ReturnType<DoaiService['team']>>>) {
++    return { id: team.id, name: team.name, track: team.track, leaderId: team.leaderId,
++      description: team.description, desc: team.description, members: team.members, inviteCode: '' }
++  }
++  async teams(query: Data = {}) {
++    // Old consumers keep their list response. New consumers request a bounded page.
++    if (query.page === undefined && query.pageSize === undefined) {
++      const rows = await this.db.doaiTeam.findMany({ where: { eventId: EVENT }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 500 })
++      const teams = await Promise.all(rows.map(row => this.team(row.id)))
++      return { ok: true, teams: teams.filter((team): team is NonNullable<typeof team> => !!team).map(team => this.publicTeam(team)) }
++    }
++    const integer = (value: unknown, fallback: number, max: number) => {
++      if (value === undefined) return fallback
++      if (!/^[1-9]\d*$/.test(String(value)) || !Number.isSafeInteger(Number(value)) || Number(value) > max) fail('分页参数无效')
++      return Number(value)
++    }
++    const requestedPage = integer(query.page, 1, 10000000), pageSize = integer(query.pageSize, 6, 60)
++    const search = text(query.search, 128), track = text(query.track, 32)
++    if (track && !['all', 'industry', 'creator'].includes(track)) fail('赛道无效')
++    const where: Prisma.DoaiTeamWhereInput = { eventId: EVENT, ...(track && track !== 'all' ? { track } : {}) }
++    if (search) {
++      const users = await this.db.user.findMany({ where: { name: { contains: search } }, select: { id: true } })
++      const members = users.length ? await this.db.doaiTeamMember.findMany({ where: { eventId: EVENT, userId: { in: users.map(u => u.id) } }, select: { teamId: true } }) : []
++      where.OR = [{ name: { contains: search } }, { description: { contains: search } }, { id: { in: members.map(m => m.teamId) } }]
++    }
++    return this.tx(async db => {
++      const total = await db.doaiTeam.count({ where }), page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)))
++      const rows = await db.doaiTeam.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize })
++      const teams = await Promise.all(rows.map(row => this.team(row.id, db)))
++      return { ok: true, page, pageSize, total, teams: teams.filter((team): team is NonNullable<typeof team> => !!team).map(team => this.publicTeam(team)) }
++    })
++  }
++  async publicTeamDetail(id: string) {
++    const team = await this.team(text(id, 36, true))
++    if (!team || team.eventId !== EVENT) fail('战队不存在或已解散', 404)
++    return { ok: true, team: this.publicTeam(team) }
+   }
+   async myTeam(user?: RequestUser) {
+     const uid = this.uid(user)

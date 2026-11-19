@@ -1,0 +1,331 @@
+diff --git a/src/modules/doai.service.ts b/src/modules/doai.service.ts
+--- a/src/modules/doai.service.ts
++++ b/src/modules/doai.service.ts
+@@ -6,6 +6,7 @@
+ import { bindRegistrationTeam, registrationTeamBinding } from './doai-registration-team'
+ import { PrismaService } from '../prisma/prisma.service'
+ import { AuthPrismaService } from '../prisma/auth-prisma.service'
++import { FORUM_CONFIG_KEY, forumInput, cancellationDeadline } from './doai-forum-catalogue'
+ import { FORUM_IDS, forumIdFromBookingKey, forumRules, forumSchedule } from './doai-forum-schedule'
+ import type { RequestUser } from '../common/current-user.decorator'
+ 
+@@ -168,7 +169,8 @@
+   }
+   private ticket(row: Data) {
+     const forumId = row.type === 'forum' ? forumIdFromBookingKey(row.bookingKey) : null
+-    const schedule = forumId ? forumSchedule(forumId) : null
++    const stored = object(row.details)
++    const schedule = stored.scheduleSource === 'catalogue-v1' && Number.isFinite(Date.parse(stored.startsAt)) && Number.isFinite(Date.parse(stored.endsAt)) ? stored : forumId ? forumSchedule(forumId) : null
+     return { ...object(row.details), ...(schedule ? { ...schedule, sessionTime: `${schedule.startsAt.slice(0, 10)} ${schedule.startsAt.slice(11, 16)} - ${schedule.endsAt.slice(11, 16)}` } : {}), id: row.id, channel: row.channel || null, bookingKey: row.bookingKey, ownerUserId: row.ownerUserId, type: row.type, qrCode: ['claimed', 'checked_in'].includes(row.status) ? row.qrCode : '',
+       holderName: row.holderName, holderPhone: row.holderPhone, status: row.status, checkedInAt: row.checkedInAt, issuedAt: row.createdAt }
+   }
+@@ -306,15 +308,61 @@
+       return { ok: true, registration: this.registration(row) }
+     })
+   }
++  private async forumCatalogue(db: Prisma.TransactionClient = this.db) {
++    const row = await db.doaiSiteConfig.findUnique({ where: { key: FORUM_CONFIG_KEY } })
++    const forums: Data[] = Array.isArray(object(row?.value).forums) ? object(row?.value).forums : []
++    return { forums, version: row?.updatedAt.toISOString() || null }
++  }
++  async publishedForums() {
++    const catalogue = await this.forumCatalogue()
++    return { ok: true, forums: catalogue.forums.filter(f => f.publication === 'published').sort((a,b) => a.startsAt.localeCompare(b.startsAt)) }
++  }
++  async managedForums(user?: RequestUser) {
++    await this.admin(user)
++    const catalogue = await this.forumCatalogue()
++    const grouped = await this.db.doaiTicket.groupBy({ by: ['bookingKey', 'status'], where: { eventId: EVENT, type: 'forum', status: { in: ['claimed', 'checked_in'] }, bookingKey: { in: catalogue.forums.map(f => `forum:${f.id}`) } }, _count: { _all: true } })
++    return { ok: true, ...catalogue, forums: catalogue.forums.map(f => ({ ...f, bookedCount: grouped.filter(r => r.bookingKey === `forum:${f.id}`).reduce((n, r) => n + r._count._all, 0), checkedInCount: grouped.filter(r => r.bookingKey === `forum:${f.id}` && r.status === 'checked_in').reduce((n, r) => n + r._count._all, 0) })) }
++  }
++  async saveForum(body: Data, user?: RequestUser, deleting = false) {
++    const updatedBy = await this.admin(user)
++    const id = text(body.forum?.id || body.id, 64) || `session-${randomUUID()}`
++    if (!/^(?:session-[a-f0-9-]{36}|forum-(?:[1-9]|1[0-8]))$/.test(id)) fail('场次标识无效')
++    const input = deleting ? null : forumInput(object(body.forum))
++    try {
++      return await this.tx(async db => {
++        await this.admin(user, db)
++        const current = await this.forumCatalogue(db)
++        if (body.expectedVersion !== current.version) fail('场次已被其他管理员修改，请重新加载后再保存', 409)
++        const previous = current.forums.find(f => f.id === id)
++        if (deleting && (!previous || previous.publication !== 'draft')) fail('仅可删除未发布的草稿', 409)
++        const bookedCount = await db.doaiTicket.count({ where: { eventId: EVENT, type: 'forum', bookingKey: `forum:${id}`, status: { in: ['claimed', 'checked_in'] } } })
++        if (bookedCount && (deleting || !previous || ['startsAt', 'endsAt', 'venue'].some(key => previous[key] !== input?.[key]))) fail('已有预约，不能删除或变更时间、场地；可暂停预约或下架', 409)
++        if (input?.capacity !== null && input?.capacity < bookedCount) fail('人数上限不能小于已有预约人数', 409)
++        const forum = input ? { ...input, id } : null
++        const forums = current.forums.filter(f => f.id !== id)
++        if (forum) forums.push(forum)
++        const updatedAt = new Date(Math.max(Date.now(), Date.parse(current.version || '') + 1 || 0))
++        if (current.version) {
++          const result = await db.doaiSiteConfig.updateMany({ where: { key: FORUM_CONFIG_KEY, updatedAt: new Date(current.version) }, data: { value: { forums } as Prisma.InputJsonValue, updatedBy, updatedAt } })
++          if (result.count !== 1) fail('场次已被其他管理员修改，请重新加载后再保存', 409)
++        } else await db.doaiSiteConfig.create({ data: { key: FORUM_CONFIG_KEY, value: { forums } as Prisma.InputJsonValue, updatedBy, updatedAt } })
++        return { ok: true, forums, version: updatedAt.toISOString() }
++      })
++    } catch (error) {
++      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') fail('场次已被其他管理员创建，请重新加载', 409)
++      throw error
++    }
++  }
+   async forumBookmarks(user?: RequestUser) {
+     const userId = this.uid(user)
+-    const rows = await this.db.doaiForumBookmark.findMany({ where: { eventId: EVENT, userId, forumId: { in: FORUM_IDS } }, orderBy: [{ createdAt: 'desc' }, { forumId: 'asc' }] })
++    const rows = await this.db.doaiForumBookmark.findMany({ where: { eventId: EVENT, userId, forumId: { in: [...FORUM_IDS, ...(await this.forumCatalogue()).forums.map(f => f.id)] } }, orderBy: [{ createdAt: 'desc' }, { forumId: 'asc' }] })
+     return { ok: true, userId, bookmarks: rows.map(row => ({ id: row.forumId, createdAt: row.createdAt })) }
+   }
+   async setForumBookmark(body: Data, user?: RequestUser) {
+     const userId = this.uid(user), id = text(body.id, 64, true)
+     if (text(body.expectedUserId, 36, true) !== userId) fail('登录账号已变化，请重新读取账号后再收藏', 409)
+-    if (!forumSchedule(id)) fail('分论坛不存在', 404)
++    if (body.saved !== false && !(await this.forumCatalogue()).forums.some(f => f.id === id && f.publication === 'published')) fail('分论坛不存在或未发布', 404)
++    if (!/^(?:forum-(?:[1-9]|1[0-8])|session-[a-f0-9-]{36})$/.test(id)) fail('分论坛不存在', 404)
+     if (typeof body.saved !== 'boolean') fail('收藏状态无效')
+     return this.tx(async db => {
+       if (body.saved) {
+@@ -326,8 +374,9 @@
+     })
+   }
+   async forumStatistics() {
+-    const grouped = await this.db.doaiTicket.groupBy({ by: ['bookingKey', 'status'], where: { eventId: EVENT, type: 'forum', status: { in: ['claimed', 'checked_in'] }, bookingKey: { in: FORUM_IDS.map(id => `forum:${id}`) } }, _count: { _all: true } })
+-    return { ok: true, forums: FORUM_IDS.map(id => {
++    const ids = (await this.forumCatalogue()).forums.filter(f => f.publication === 'published').map(f => f.id)
++    const grouped = await this.db.doaiTicket.groupBy({ by: ['bookingKey', 'status'], where: { eventId: EVENT, type: 'forum', status: { in: ['claimed', 'checked_in'] }, bookingKey: { in: ids.map(id => `forum:${id}`) } }, _count: { _all: true } })
++    return { ok: true, forums: ids.map(id => {
+       const counts = grouped.filter(row => row.bookingKey === `forum:${id}`)
+       return { id, bookedCount: counts.reduce((sum, row) => sum + row._count._all, 0), checkedInCount: counts.filter(row => row.status === 'checked_in').reduce((sum, row) => sum + row._count._all, 0) }
+     }) }
+@@ -344,10 +393,8 @@
+     if (bookingKey.startsWith('forum:') && body.type !== 'forum') fail('论坛预约键须使用论坛票种')
+     const channel = body.type === 'guest' ? this.channel(body.channel) : null
+     const media = MEDIA_BOOKINGS.includes(bookingKey)
+-    const forumId = body.type === 'forum' ? forumIdFromBookingKey(bookingKey) : null
+-    const schedule = forumId ? forumRules(forumId) : null
+-    if (body.type === 'forum' && !schedule) fail('分论坛场次不存在，请刷新列表')
+-    if (schedule && !schedule.bookingOpen) fail('该分论坛已结束，不能再预约', 409)
++    const forumId = body.type === 'forum' && bookingKey.startsWith('forum:') ? bookingKey.slice(6) : null
++    if (body.type === 'forum' && !forumId) fail('分论坛场次不存在，请刷新列表')
+     const attendanceKeys: Record<string, string[]> = {
+       'pass-full': ['attendance:seat-open', 'attendance:seat-roadshow', 'attendance:seat-orbit', 'attendance:seat-afterparty'],
+       'pass-day2': ['attendance:pass-day2'], 'pass-media': MEDIA_BOOKINGS,
+@@ -357,10 +404,23 @@
+     if (media && body.type !== 'guest') fail('媒体申请须使用参会票种')
+     if (body.passType === 'pass-forum') fail('请通过分论坛场次预约')
+     const organization = text(body.organization, 128, media)
+-    const details = { title: text(body.title, 128, true), titleEn: text(body.titleEn, 128), sessionTime: text(body.sessionTime, 128), venue: text(body.venue, 128),
+-      organization, passType: media ? 'pass-media' : text(body.passType, 32), ...(schedule ? { startsAt: schedule.startsAt, endsAt: schedule.endsAt, cancellationDeadline: schedule.cancellationDeadline, sessionTime: `${schedule.startsAt.slice(0, 10)} ${schedule.startsAt.slice(11, 16)} - ${schedule.endsAt.slice(11, 16)}` } : {}) }
+-    return this.tx(async db => {
+-      if (forumId && !forumRules(forumId)?.bookingOpen) fail('该分论坛已结束，不能再预约', 409)
++    let details: Data = { title: text(body.title, 128, true), titleEn: text(body.titleEn, 128), sessionTime: text(body.sessionTime, 128), venue: text(body.venue, 128),
++      organization, passType: media ? 'pass-media' : text(body.passType, 32) }
++    return this.tx(async db => {
++      if (forumId) {
++        const catalogue = await this.forumCatalogue(db)
++        const forum = catalogue.forums.find(f => f.id === forumId)
++        if (!forum || forum.publication !== 'published') fail('分论坛尚未发布或已下架', 409)
++        const existing = await db.doaiTicket.findUnique({ where: { eventId_ownerUserId_bookingKey: { eventId: EVENT, ownerUserId: uid, bookingKey } } })
++        if (existing && ['claimed', 'checked_in'].includes(existing.status)) return { ok: true, ticket: this.ticket(existing) }
++        if (!forum.bookingEnabled || Date.now() >= Date.parse(forum.endsAt)) fail('该场次已暂停预约或已结束', 409)
++        if (forum.capacity !== null) {
++          const count = await db.doaiTicket.count({ where: { eventId: EVENT, type: 'forum', bookingKey, status: { in: ['claimed', 'checked_in'] } } })
++          if (count >= forum.capacity) fail('该场次预约已满', 409)
++        }
++        details = { ...details, scheduleSource: 'catalogue-v1', title: forum.title, titleEn: forum.titleEn, venue: forum.venue, startsAt: forum.startsAt, endsAt: forum.endsAt,
++          cancellationDeadline: forum.cancellationDeadline, sessionTime: `${forum.date} ${forum.time}` }
++      }
+       const owner = await this.user(uid, db)
+       const row = await db.doaiTicket.upsert({ where: { eventId_ownerUserId_bookingKey: { eventId: EVENT, ownerUserId: uid, bookingKey } }, update: {},
+         create: { id: randomUUID(), eventId: EVENT, ownerUserId: uid, bookingKey, channel, qrCode: `DOAI-PASS-${randomUUID().toUpperCase()}`, type: body.type, status: media ? 'pending_review' : 'claimed',
+@@ -369,7 +429,7 @@
+       if (row.type !== body.type) fail('已有票据类型与本次预约不符，请联系组委会', 409)
+       if (row.status === 'cancelled' && media) fail('该媒体申请已取消，请联系组委会', 409)
+       if (row.status === 'cancelled') {
+-        await db.doaiTicket.updateMany({ where: { id: row.id, status: 'cancelled' }, data: { status: 'claimed' } })
++        await db.doaiTicket.updateMany({ where: { id: row.id, status: 'cancelled' }, data: { status: 'claimed', details: details as Prisma.InputJsonValue } })
+         const active = await db.doaiTicket.findUniqueOrThrow({ where: { id: row.id } })
+         return { ok: true, ticket: this.ticket(active) }
+       }
+@@ -408,7 +468,8 @@
+       if (ticket.status === 'cancelled') return { ok: true }
+       if (ticket.status !== 'claimed') fail('已核销或无效的凭证不能取消', 409)
+       const forumId = forumIdFromBookingKey(ticket.bookingKey)
+-      const schedule = forumId ? forumRules(forumId) : null
++      const configured = (await this.forumCatalogue(db)).forums.find(f => `forum:${f.id}` === ticket.bookingKey)
++      const schedule = configured ? { cancellationOpen: Date.now() < Date.parse(cancellationDeadline(configured.startsAt)) } : forumId ? forumRules(forumId) : null
+       if (!schedule) fail('该场次时间尚未确认，请联系组委会调整', 409)
+       if (!schedule.cancellationOpen) fail('已进入开场前 48 小时，不能自助取消，请联系组委会', 409)
+       const result = await db.doaiTicket.updateMany({ where: { id, eventId: EVENT, ownerUserId: uid, type: 'forum', status: 'claimed' }, data: { status: 'cancelled' } })
+diff --git a/src/modules/doai.module.ts b/src/modules/doai.module.ts
+--- a/src/modules/doai.module.ts
++++ b/src/modules/doai.module.ts
+@@ -24,6 +24,10 @@
+   @Post('admin/registrations/:id/status') reviewPath(@Param('id') id: string, @Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.review(id, body, user) }
+   @Get('forum-bookmarks') forumBookmarks(@CurrentUser() user?: RequestUser) { return this.service.forumBookmarks(user) }
+   @Post('forum-bookmarks') setForumBookmark(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.setForumBookmark(body, user) }
++  @Get('forums') publishedForums() { return this.service.publishedForums() }
++  @Get('admin/forums') managedForums(@CurrentUser() user?: RequestUser) { return this.service.managedForums(user) }
++  @Post('admin/forums') saveForum(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.saveForum(body, user) }
++  @Delete('admin/forums/:id') deleteForum(@Param('id') id: string, @Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.saveForum({ ...body, forum: undefined, id }, user, true) }
+   @Get('forum-stats') forumStatistics() { return this.service.forumStatistics() }
+   @Get('tickets') tickets(@CurrentUser() user?: RequestUser) { return this.service.tickets(user) }
+   @Post('tickets') issue(@Body() body: Record<string, any>, @CurrentUser() user?: RequestUser) { return this.service.issueTicket(body, user) }
+diff --git a/src/modules/doai.service.spec.ts b/src/modules/doai.service.spec.ts
+--- a/src/modules/doai.service.spec.ts
++++ b/src/modules/doai.service.spec.ts
+@@ -5,6 +5,8 @@
+ import { PrismaService } from '../prisma/prisma.service'
+ 
+ const actor = { id: 'actor' }
++const forumFixtures = Array.from({length:18},(_,i) => ({ id: `forum-${i+1}`, title: '确认议题', titleEn: 'Confirmed', track: '交流', trackEn: 'Forum', description: '论坛介绍', descriptionEn: 'Description', venue: '会场', venueEn: 'Venue', publication: 'published', bookingEnabled: true, capacity: null, speakers: [], ...forumSchedule(`forum-${i+1}`), date: '2026-12-06', time: '10:00 - 12:00' }))
++const catalogueRow = () => ({ key: 'doai-2026-forums-v1', value: { forums: forumFixtures }, updatedAt: new Date('2026-10-01T00:00:00Z') })
+ function setup() {
+   const db: any = {
+     doaiRegistrationRequest: { findUnique: jest.fn(async () => null), create: jest.fn(async ({ data }) => data) },
+@@ -12,7 +14,7 @@
+     doaiAdminAccount: { findUnique: jest.fn(async () => null), findMany: jest.fn(async () => []), upsert: jest.fn(async ({ create, update }) => ({ ...create, ...update })), update: jest.fn() },
+     user: { findUnique: jest.fn(async ({ where }) => ({ id: where.id, name: '真实主站姓名', phone: '13800000000' })), findMany: jest.fn(async ({ where }) => (where?.id?.in ?? []).map((id: string) => ({ id, name: '真实主站姓名', avatarUrl: null, city: '' }))) },
+     doaiRegistration: { create: jest.fn(async ({ data }) => ({ ...data, status: 'submitted', createdAt: new Date() })), findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn(async () => []) },
+-    doaiTicket: { groupBy: jest.fn(async () => []), upsert: jest.fn(async ({ create }) => ({ ...create, createdAt: new Date() })), update: jest.fn(async ({ data }) => data), create: jest.fn(async ({ data }) => ({ ...data, status: 'claimed', createdAt: new Date() })), findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn(async () => []) },
++    doaiTicket: { count: jest.fn(async () => 0), groupBy: jest.fn(async () => []), upsert: jest.fn(async ({ create }) => ({ ...create, createdAt: new Date() })), update: jest.fn(async ({ data }) => data), create: jest.fn(async ({ data }) => ({ ...data, status: 'claimed', createdAt: new Date() })), findUnique: jest.fn(), updateMany: jest.fn(), findMany: jest.fn(async () => []) },
+     doaiNotification: { create: jest.fn(async ({ data }) => data), findMany: jest.fn(async () => []) },
+     doaiCheckin: { create: jest.fn(), findMany: jest.fn(async () => []) },
+     doaiProfile: { upsert: jest.fn(async ({ create }) => create), findMany: jest.fn(async () => []), findUnique: jest.fn(), update: jest.fn() },
+@@ -28,7 +30,7 @@
+     doaiRecruitmentLike: { findMany: jest.fn(async () => []), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), deleteMany: jest.fn(async () => ({ count: 0 })), count: jest.fn(async () => 0) },
+     doaiRecruitmentApplication: { update: jest.fn(), findMany: jest.fn(async () => []), findUnique: jest.fn(), create: jest.fn(), deleteMany: jest.fn(async () => ({ count: 0 })), count: jest.fn(async () => 0) },
+     doaiProfileLike: { findMany: jest.fn(async () => []), findUnique: jest.fn(), create: jest.fn(), delete: jest.fn(), count: jest.fn(async () => 0) },
+-    doaiSiteConfig: { create: jest.fn(async ({ data }) => ({ ...data, updatedAt: new Date() })), updateMany: jest.fn(async () => ({ count: 1 })), findUnique: jest.fn(async () => null), upsert: jest.fn(async ({ create, update }) => ({ ...create, ...update, updatedAt: new Date() })) },
++    doaiSiteConfig: { create: jest.fn(async ({ data }) => ({ ...data, updatedAt: new Date() })), updateMany: jest.fn(async () => ({ count: 1 })), findUnique: jest.fn(async ({ where }) => where.key === 'doai-2026-forums-v1' ? catalogueRow() : null), upsert: jest.fn(async ({ create, update }) => ({ ...create, ...update, updatedAt: new Date() })) },
+   }
+   db.$transaction = jest.fn(async (fn: (db: unknown) => Promise<unknown>) => fn(db))
+   return { db, service: new DoaiService(db as PrismaService) }
+@@ -803,7 +805,7 @@
+   })
+   it('refuses unknown sessions and stops new/reopened bookings once the session has ended', async () => {
+     const { service, db } = setup()
+-    await status(service.issueTicket({ type: 'forum', bookingKey: 'forum:unknown', title: 'Unknown' }, actor), 400)
++    await status(service.issueTicket({ type: 'forum', bookingKey: 'forum:unknown', title: 'Unknown' }, actor), 409)
+     await status(service.issueTicket({ type: 'guest', bookingKey: 'forum:forum-1', title: 'Wrong type' }, actor), 400)
+     jest.spyOn(Date, 'now').mockReturnValue(Date.parse(forumSchedule('forum-1')!.endsAt))
+     await status(service.issueTicket({ type: 'forum', bookingKey: 'forum:forum-1', title: 'Ended' }, actor), 409)
+@@ -1167,3 +1169,63 @@
+     expect(db.doaiTicket.update).not.toHaveBeenCalled()
+   })
+ })
++
++
++describe('database-managed forum lifecycle', () => {
++  const prior = process.env.DOAI_ADMIN_USER_IDS
++  beforeEach(() => { process.env.DOAI_ADMIN_USER_IDS = actor.id })
++  afterEach(() => { if (prior === undefined) delete process.env.DOAI_ADMIN_USER_IDS; else process.env.DOAI_ADMIN_USER_IDS = prior })
++  const input = () => ({ ...forumFixtures[0], id: undefined })
++  it('publishes only database-confirmed sessions and starts empty without a registry', async () => {
++    const { service, db } = setup()
++    db.doaiSiteConfig.findUnique.mockResolvedValueOnce(null)
++    expect((await service.publishedForums()).forums).toEqual([])
++    db.doaiSiteConfig.findUnique.mockResolvedValueOnce({ ...catalogueRow(), value: { forums: [{...input(), id:'a', publication:'draft'}, {...input(), id:'b'}] } })
++    expect((await service.publishedForums()).forums.map(f => f.id)).toEqual(['b'])
++  })
++  it('requires full admin permission and rejects invalid dates and stale editors', async () => {
++    const { service } = setup()
++    await status(service.managedForums(), 401)
++    await status(service.saveForum({forum:input(), expectedVersion:null}, {id:'visitor'}),403)
++    await status(service.saveForum({forum:{...input(), endsAt:'2026-12-06T09:00:00+08:00'},expectedVersion:null},actor),400)
++    await status(service.saveForum({forum:input(),expectedVersion:null},actor),409)
++  })
++  it('persists new drafts with server IDs, independent language fallbacks, and a version', async () => {
++    const { service, db } = setup()
++    db.doaiSiteConfig.findUnique.mockResolvedValue(null)
++    const result = await service.saveForum({forum:{...input(),titleEn:'', publication:'draft'},expectedVersion:null},actor)
++    expect(result.forums[0].id).toMatch(/^session-/)
++    expect(result.forums[0].titleEn).toBe(result.forums[0].title)
++    expect(db.doaiSiteConfig.create).toHaveBeenCalled()
++    expect(result.version).toBeTruthy()
++  })
++  it('prevents moving booked sessions and reducing capacity below active reservations', async () => {
++    const { service, db } = setup(); db.doaiTicket.count.mockResolvedValue(2)
++    const expectedVersion = catalogueRow().updatedAt.toISOString()
++    await status(service.saveForum({forum:{...forumFixtures[0],venue:'另一个会场'},expectedVersion},actor),409)
++    await status(service.saveForum({forum:{...forumFixtures[0],capacity:1},expectedVersion},actor),409)
++    const result = await service.saveForum({forum:{...forumFixtures[0],bookingEnabled:false},expectedVersion},actor)
++    expect(result.forums.find(f => f.id === 'forum-1').bookingEnabled).toBe(false)
++  })
++  it('enforces published status, pause and capacity on the server', async () => {
++    const {service,db} = setup()
++    const request={type:'forum',bookingKey:'forum:forum-1',title:'forged',venue:'forged'}
++    for(const patch of [{publication:'draft'},{bookingEnabled:false},{capacity:1}]) {
++      db.doaiSiteConfig.findUnique.mockResolvedValue({...catalogueRow(),value:{forums:[{...forumFixtures[0],...patch}]}})
++      db.doaiTicket.count.mockResolvedValue(1)
++      await status(service.issueTicket(request,actor),409)
++    }
++    expect(db.doaiTicket.upsert).not.toHaveBeenCalled()
++  })
++  it('issues authoritative passes and cancels unpublished dynamic sessions using the saved deadline', async () => {
++    const {service,db} = setup()
++    const forum={...forumFixtures[0],id:'session-11111111-1111-1111-1111-111111111111'}
++    db.doaiSiteConfig.findUnique.mockResolvedValue({...catalogueRow(),value:{forums:[forum]}})
++    const result=await service.issueTicket({type:'forum',bookingKey:`forum:${forum.id}`,title:'forged',venue:'forged'},actor)
++    expect(result.ticket.title).toBe(forum.title)
++    expect(result.ticket.venue).toBe(forum.venue)
++    db.doaiTicket.findUnique.mockResolvedValue({...result.ticket,eventId:'doai-2026',status:'claimed',details:{startsAt:forum.startsAt,endsAt:forum.endsAt}})
++    db.doaiTicket.updateMany.mockResolvedValue({count:1})
++    expect((await service.cancelTicket(result.ticket.id,actor)).ok).toBe(true)
++  })
++})
+diff --git a/src/common/doai-actor.ts b/src/common/doai-actor.ts
+--- a/src/common/doai-actor.ts
++++ b/src/common/doai-actor.ts
+@@ -24,6 +24,7 @@
+       '/doai/health',
+       '/doai/site-config',
+       '/doai/forum-stats',
++      '/doai/forums',
+       '/doai/users',
+       '/doai/teams',
+       '/doai/wx-articles',
+diff --git a/src/modules/doai-forum-catalogue.ts b/src/modules/doai-forum-catalogue.ts
+new file mode 100644
+--- /dev/null
++++ b/src/modules/doai-forum-catalogue.ts
+@@ -0,0 +1,41 @@
++import { HttpException } from '@nestjs/common'
++export const FORUM_CONFIG_KEY = 'doai-2026-forums-v1'
++export const cancellationDeadline = (startsAt: string) => new Date(Date.parse(startsAt) - 48 * 3600000).toISOString()
++const invalid = (message: string): never => { throw new HttpException({ error: { message } }, 400) }
++export function forumInput(input: Record<string, any>) {
++  const value: Record<string, any> = {}
++  for (const key of ['title', 'titleEn', 'track', 'trackEn', 'venue', 'venueEn', 'description', 'descriptionEn']) {
++    const item = input[key] ?? ''
++    if (typeof item !== 'string' || item.trim().length > (key.startsWith('description') ? 4000 : 128)) invalid('场次字段格式或长度不正确')
++    value[key] = item.trim()
++  }
++  if (!value.title || !value.venue || !value.description) invalid('请填写议题、场地与介绍')
++  for (const key of ['title', 'track', 'venue', 'description']) value[`${key}En`] ||= value[key]
++  value.track ||= value.title; value.trackEn ||= value.titleEn
++  for (const key of ['startsAt', 'endsAt']) {
++    if (typeof input[key] !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00\+08:00$/.test(input[key]) || !Number.isFinite(Date.parse(input[key]))) invalid('请填写有效的上海时间')
++    const parsed = new Date(Date.parse(input[key]) + 8 * 3600000).toISOString().slice(0, 19)
++    if (parsed !== input[key].slice(0, 19)) invalid('日期或时间无效')
++    value[key] = input[key]
++  }
++  if (Date.parse(value.endsAt) <= Date.parse(value.startsAt)) invalid('结束时间须晚于开始时间')
++  if (value.startsAt.slice(0, 10) !== value.endsAt.slice(0, 10)) invalid('一场论坛须在同一天内结束')
++  if (!['draft', 'published'].includes(input.publication)) invalid('发布状态无效')
++  if (typeof input.bookingEnabled !== 'boolean') invalid('预约开关无效')
++  if (input.capacity !== null && (!Number.isSafeInteger(input.capacity) || input.capacity < 1 || input.capacity > 100000)) invalid('人数上限须为 1–100000 的整数，或留空不限')
++  if (!Array.isArray(input.speakers) || input.speakers.length > 30) invalid('嘉宾最多 30 位')
++  value.speakers = input.speakers.map((speaker: any) => {
++    if (!speaker || typeof speaker !== 'object') invalid('嘉宾格式无效')
++    const row: Record<string, string> = {}
++    for (const key of ['name', 'nameEn', 'role', 'roleEn', 'org', 'avatar']) {
++      if (typeof (speaker[key] ?? '') !== 'string' || (speaker[key] || '').length > (key === 'avatar' ? 512 : 128)) invalid('嘉宾字段格式或长度不正确')
++      row[key] = (speaker[key] || '').trim()
++    }
++    if (!row.name) invalid('请填写嘉宾姓名')
++    if (row.avatar) { try { if (!['https:', 'http:'].includes(new URL(row.avatar).protocol)) invalid('嘉宾头像须为 http/https 链接') } catch { invalid('嘉宾头像链接无效') } }
++    row.nameEn ||= row.name; row.roleEn ||= row.role
++    return row
++  })
++  return { ...value, publication: input.publication, bookingEnabled: input.bookingEnabled, capacity: input.capacity,
++    cancellationDeadline: cancellationDeadline(value.startsAt), date: value.startsAt.slice(0, 10), time: `${value.startsAt.slice(11,16)} - ${value.endsAt.slice(11,16)}`, status: 'upcoming' }
++}

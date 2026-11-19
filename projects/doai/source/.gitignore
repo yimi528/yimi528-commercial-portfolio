@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+# 后端 JSON 演示数据目录（仅仓库根目录；不要写成 data/，那会误伤 src/data/）
+/data/
+
+.vercel/
+.vercel
