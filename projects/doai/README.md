@@ -10,7 +10,7 @@
 
 ![DOAI 大会介绍页与手机端界面实拍](images/project-cover.png)
 
-[桌面端原图](images/conference-desktop.png) &nbsp; / &nbsp; [手机端原图](images/conference-mobile.png) &nbsp; / &nbsp; **[完整开发详解](IMPLEMENTATION.md)**
+[桌面端原图](images/conference-desktop.png) &nbsp; / &nbsp; [手机端原图](images/conference-mobile.png) &nbsp; / &nbsp; **[完整开发详解](IMPLEMENTATION.md)** &nbsp; / &nbsp; [查看网站源码](source/)
 
 ## 一个活动平台，连接三类用户
 
