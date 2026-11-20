@@ -1,43 +1,31 @@
-# yimi528
+# yimi528 · 全栈开发作品集
 
-**独立全栈开发**
+简体中文 / [English](README.en.md) · [GitHub](https://github.com/yimi528)
 
-简体中文 / [English](README.en.md) &nbsp;&nbsp; [GitHub](https://github.com/yimi528)
+## DOAI · 全球创客大会官网与活动平台
 
-把业务需求做成可用的产品。从页面与交互，到后端、数据库和交付工具，我独立负责项目的整体开发。
+我独立负责 DOAI 的需求梳理、界面设计与全栈开发，包括主站账号接入、数据库迁移、自动化验证和部署适配。平台串联大会展示、参会申请、赛事报名、论坛预约、团队协作与现场核销。
 
-<br>
+**[查看项目案例](projects/doai/README.md)** · [实现详解](projects/doai/IMPLEMENTATION.md) · **[浏览网站源码](projects/doai/source/)**
 
-## DOAI
+[![DOAI 大会介绍页实拍，含桌面端与手机端](projects/doai/images/project-cover.png)](projects/doai/README.md)
 
-全球创客大会官网与活动业务平台
+### 交付范围
 
-[![DOAI 大会介绍页与手机端展示](projects/doai/images/project-cover.png)](projects/doai/README.md)
+- **参会与参赛**包括参会申请、论坛预约、电子凭证、团队报名和作品提交。
+- **创客协作**覆盖战队招募、入队申请与邀请、名片交换、消息和隐私设置。
+- **运营后台**支持申请审核、内容与场次管理、渠道权限、数据导出和扫码核销。
 
-为参会者、创客和运营人员构建同一套活动平台，串联大会展示、赛事报名、论坛预约、组队协作和现场核销。
+### 关键工程实现
 
-- **产品与界面**：官网、报名向导、数字 Passport、个人中心与运营后台。
-- **业务与数据**：票务、战队、社区、消息、审核、权限和数据库持久化。
-- **工程与交付**：并发与异常处理、自动化回归、部署适配和发布工具。
+- **报名重试**通过稳定的请求标识和服务端回执查询处理重复提交与响应丢失。
+- **并发与状态一致性**通过数据库事务维护预约名额、战队人数及核销状态，并用版本校验处理并发编辑。
+- **账号与权限隔离**由服务端会话确认操作者并校验业务权限，前端在切换账号后隔离旧缓存和迟到响应。
 
-**[查看项目案例](projects/doai/README.md)** &nbsp;&nbsp; [完整开发详解](projects/doai/IMPLEMENTATION.md) &nbsp;&nbsp; [查看网站源码](projects/doai/source/)
+前端使用 React、TypeScript、Tailwind CSS 和 Vite，通过 Express 同源代理接入主站的 NestJS 服务。业务数据由 Prisma 和 MySQL 持久化。网站支持 Vercel 和 `/doai/` 子路径部署。
 
-<br>
-
-### 技术栈
-
-`React` `TypeScript` `Tailwind CSS` `Vite`
-
-`Node.js` `Express` `NestJS` `Prisma` `MySQL`
-
-`Vercel` `Puppeteer`
-
-### 我关注的开发工作
-
-把参与者和运营人员的需求整理成完整流程，处理账号、权限、状态、并发和失败恢复，让界面与业务逻辑共同支撑产品使用。
-
-本作品集保留页面实拍、完整工作范围与关键实现，方便在面试中进一步讨论设计选择和代码细节。
+公开的源码目录包含网站代码、同源代理、测试脚本及配套的后端补丁和 SQL 迁移。
 
 ---
 
-<sub>DOAI 网站源码已在本仓库公开。作品集文档采用 <a href="LICENSE">Apache-2.0</a> 许可。项目源码、品牌及第三方素材的权利归各自权利人所有。</sub>
+<sub>作品集文档采用 <a href="LICENSE">Apache-2.0</a> 许可。项目源码、品牌及第三方素材的权利归各自权利人所有。</sub>

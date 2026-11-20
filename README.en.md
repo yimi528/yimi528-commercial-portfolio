@@ -1,43 +1,31 @@
-# yimi528
+# yimi528 · Full-Stack Development Portfolio
 
-**Independent full-stack developer**
+[简体中文](README.md) / English · [GitHub](https://github.com/yimi528)
 
-[简体中文](README.md) / English &nbsp;&nbsp; [GitHub](https://github.com/yimi528)
+## DOAI · Global Maker Conference Website and Event Platform
 
-I turn business needs into usable products, independently owning development from interfaces and interactions to backend services, databases, and delivery tools.
+I independently owned requirements, interface design, and full-stack development for DOAI, including account integration, database migrations, automated verification, and deployment support. The platform connects conference information, attendance applications, contest entries, forum reservations, team collaboration, and on-site check-in.
 
-<br>
-
-## DOAI
-
-A conference website and event platform for makers
+**[View the Case Study](projects/doai/README.en.md)** · [Implementation Details](projects/doai/IMPLEMENTATION.en.md) · **[Browse the Website Source](projects/doai/source/)**
 
 [![DOAI conference overview on desktop and mobile](projects/doai/images/project-cover.png)](projects/doai/README.en.md)
 
-One platform for attendees, makers, and operators, connecting conference information, contest registration, forum booking, team collaboration, and on-site check-in.
+### What I Built
 
-- **Product and interface**: Public website, registration wizard, digital Passport, personal dashboard, and operations dashboard.
-- **Workflows and data**: Tickets, teams, community, messages, reviews, permissions, and persistence.
-- **Engineering and delivery**: Concurrency and failure handling, automated regression coverage, deployment support, and release tools.
+- **Attendance and competition** workflows cover applications, forum reservations, digital passes, team registration, and project submissions.
+- **Maker collaboration** includes team recruitment, join requests and invitations, card exchange, messaging, and privacy settings.
+- **Event operations** supports application review, content and session management, channel-scoped permissions, data exports, and QR check-in.
 
-**[View Case Study](projects/doai/README.en.md)** &nbsp;&nbsp; [Implementation Details](projects/doai/IMPLEMENTATION.en.md) &nbsp;&nbsp; [Browse Website Source](projects/doai/source/)
+### Engineering Details
 
-<br>
+- **Registration retries** use stable request IDs and server-side receipt lookup to handle duplicate submissions and lost responses.
+- **Concurrent updates** use database transactions for booking availability, team size, and check-in status, plus version checks for concurrent edits.
+- **Account and permission isolation** uses server-side sessions to identify the acting user and enforce permissions. The frontend isolates cached data and late responses after an account switch.
 
-### Technologies
+The React and TypeScript frontend uses Tailwind CSS and Vite. An Express same-origin proxy connects it to the main platform’s NestJS services, with Prisma and MySQL for persistence. The project supports deployment to Vercel and under the `/doai/` subpath.
 
-`React` `TypeScript` `Tailwind CSS` `Vite`
-
-`Node.js` `Express` `NestJS` `Prisma` `MySQL`
-
-`Vercel` `Puppeteer`
-
-### My Approach
-
-I translate participant and operator needs into complete workflows, handling identity, permissions, state, concurrency, and recovery so that the interface and business logic work together.
-
-This portfolio includes real interface screenshots, the full scope of my work, and key implementation details as reference points for interviews and technical discussions.
+The public source directory includes the website, same-origin proxy, test scripts, backend patches, and SQL migrations.
 
 ---
 
-<sub>The DOAI website source code is available in this repository. Portfolio documentation is licensed under <a href="LICENSE">Apache-2.0</a>. Rights to the project source code, branding, and third-party materials remain with their respective owners.</sub>
+<sub>Portfolio documentation is licensed under <a href="LICENSE">Apache-2.0</a>. Rights to the project source code, branding, and third-party materials remain with their respective owners.</sub>
